@@ -1,0 +1,29 @@
+# Environment and dependencies
+.venv/
+env/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignored project documentation and agent state
+.agents/
+docs/
+.playwright-mcp/
+
+# Datasets and model checkpoints
+data/
+*.zip
+*.tar.gz
+weights/
+*.pth
+*.pt
+*.onnx
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
