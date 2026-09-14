@@ -17,6 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
+import numpy as np
 
 # RealWaste 9 Classes (canonical ordering matching UCI specs)
 CLASSES: Tuple[str, ...] = (
@@ -158,20 +159,40 @@ def collect_image_records(dataset_root: Path) -> Tuple[List[str], List[int]]:
 class RealWasteDataset(Dataset):
     """
     PyTorch Dataset wrapper for RealWaste image classification at 64x64 resolution.
+    Supports high-speed in-memory tensor caching to avoid repeated disk decoding.
     """
-    def __init__(self, filepaths: List[str], labels: List[int], transform: Optional[transforms.Compose] = None):
-        self.filepaths = filepaths
-        self.labels = labels
+    def __init__(
+        self,
+        filepaths: Optional[List[str]] = None,
+        labels: Optional[List[int]] = None,
+        images_tensor: Optional[torch.Tensor] = None,
+        transform: Optional[transforms.Compose] = None,
+    ):
         self.transform = transform
+        if images_tensor is not None:
+            self.images_tensor = images_tensor  # (N, H, W, C) uint8
+            self.labels = labels if labels is not None else []
+            self.filepaths = None
+        else:
+            self.images_tensor = None
+            self.filepaths = filepaths or []
+            self.labels = labels or []
 
     def __len__(self) -> int:
+        if self.images_tensor is not None:
+            return len(self.images_tensor)
         return len(self.filepaths)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        path = self.filepaths[idx]
-        label = self.labels[idx]
-        with Image.open(path) as img:
-            image = img.convert("RGB")
+        label = int(self.labels[idx])
+        if self.images_tensor is not None:
+            img_arr = self.images_tensor[idx].numpy()
+            image = Image.fromarray(img_arr)
+        else:
+            path = self.filepaths[idx]
+            with Image.open(path) as img:
+                image = img.convert("RGB")
+
         if self.transform is not None:
             image = self.transform(image)
         return image, label
@@ -199,23 +220,14 @@ def get_transforms(image_size: int = 64) -> Tuple[transforms.Compose, transforms
     return train_transform, eval_transform
 
 
-# Fix transforms.ToTensor() typo in train_transform above
-def get_transforms(image_size: int = 64) -> Tuple[transforms.Compose, transforms.Compose]:
-    train_transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomCrop(image_size, padding=4, padding_mode="reflect"),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=NORM_MEAN, std=NORM_STD),
-    ])
-
-    eval_transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=NORM_MEAN, std=NORM_STD),
-    ])
-
-    return train_transform, eval_transform
+def _preprocess_image_list(paths: List[str], image_size: int) -> torch.Tensor:
+    """Pre-downscales image list into uint8 tensor (N, H, W, 3)."""
+    tensors = []
+    for p in tqdm(paths, desc="Downscaling images", unit="img"):
+        with Image.open(p) as img:
+            rgb = img.convert("RGB").resize((image_size, image_size), Image.BILINEAR)
+            tensors.append(np.array(rgb, dtype=np.uint8))
+    return torch.from_numpy(np.stack(tensors, axis=0))
 
 
 def get_realwaste_dataloaders(
@@ -225,9 +237,11 @@ def get_realwaste_dataloaders(
     seed: int = 42,
     num_workers: int = 2,
     download: bool = True,
+    use_cache: bool = True,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int]]:
     """
     Generates deterministic stratified 70% Train, 15% Validation, and 15% Test DataLoaders.
+    Pre-caches downscaled 64x64 images as uint8 tensors for fast training.
     
     Returns:
         train_loader (DataLoader): 70% of dataset (3,326 samples)
@@ -242,32 +256,70 @@ def get_realwaste_dataloaders(
         else:
             raise FileNotFoundError(f"RealWaste dataset not found in {data_dir}. Set download=True.")
 
-    filepaths, labels = collect_image_records(root)
-    total_samples = len(filepaths)
-
-    # Deterministic stratified split: 70% Train, 30% Temp (Val + Test)
-    train_files, temp_files, train_labels, temp_labels = train_test_split(
-        filepaths,
-        labels,
-        test_size=0.30,
-        random_state=seed,
-        stratify=labels,
-    )
-
-    # Split remaining 30% equally: 15% Val, 15% Test
-    val_files, test_files, val_labels, test_labels = train_test_split(
-        temp_files,
-        temp_labels,
-        test_size=0.50,
-        random_state=seed,
-        stratify=temp_labels,
-    )
-
+    cache_file = Path(data_dir) / f"realwaste_cache_{image_size}x{image_size}.pt"
     train_transform, eval_transform = get_transforms(image_size=image_size)
 
-    train_dataset = RealWasteDataset(train_files, train_labels, transform=train_transform)
-    val_dataset = RealWasteDataset(val_files, val_labels, transform=eval_transform)
-    test_dataset = RealWasteDataset(test_files, test_labels, transform=eval_transform)
+    if use_cache and cache_file.exists():
+        cached = torch.load(cache_file, weights_only=False)
+        train_dataset = RealWasteDataset(
+            images_tensor=cached["train_imgs"],
+            labels=cached["train_labels"],
+            transform=train_transform,
+        )
+        val_dataset = RealWasteDataset(
+            images_tensor=cached["val_imgs"],
+            labels=cached["val_labels"],
+            transform=eval_transform,
+        )
+        test_dataset = RealWasteDataset(
+            images_tensor=cached["test_imgs"],
+            labels=cached["test_labels"],
+            transform=eval_transform,
+        )
+    else:
+        filepaths, labels = collect_image_records(root)
+
+        # Deterministic stratified split: 70% Train, 30% Temp (Val + Test)
+        train_files, temp_files, train_labels, temp_labels = train_test_split(
+            filepaths,
+            labels,
+            test_size=0.30,
+            random_state=seed,
+            stratify=labels,
+        )
+
+        # Split remaining 30% equally: 15% Val, 15% Test
+        val_files, test_files, val_labels, test_labels = train_test_split(
+            temp_files,
+            temp_labels,
+            test_size=0.50,
+            random_state=seed,
+            stratify=temp_labels,
+        )
+
+        if use_cache:
+            print(f"[Data Pipeline] Caching {len(filepaths)} images to 64x64 uint8 tensors...")
+            train_imgs = _preprocess_image_list(train_files, image_size)
+            val_imgs = _preprocess_image_list(val_files, image_size)
+            test_imgs = _preprocess_image_list(test_files, image_size)
+
+            torch.save({
+                "train_imgs": train_imgs,
+                "train_labels": train_labels,
+                "val_imgs": val_imgs,
+                "val_labels": val_labels,
+                "test_imgs": test_imgs,
+                "test_labels": test_labels,
+            }, cache_file)
+            print(f"[Data Pipeline] Cache saved to {cache_file} ({cache_file.stat().st_size / (1024*1024):.1f} MB)")
+
+            train_dataset = RealWasteDataset(images_tensor=train_imgs, labels=train_labels, transform=train_transform)
+            val_dataset = RealWasteDataset(images_tensor=val_imgs, labels=val_labels, transform=eval_transform)
+            test_dataset = RealWasteDataset(images_tensor=test_imgs, labels=test_labels, transform=eval_transform)
+        else:
+            train_dataset = RealWasteDataset(train_files, train_labels, transform=train_transform)
+            val_dataset = RealWasteDataset(val_files, val_labels, transform=eval_transform)
+            test_dataset = RealWasteDataset(test_files, test_labels, transform=eval_transform)
 
     train_loader = DataLoader(
         train_dataset,
@@ -292,6 +344,7 @@ def get_realwaste_dataloaders(
     )
 
     return train_loader, val_loader, test_loader, CLASS_TO_IDX
+
 
 
 if __name__ == "__main__":

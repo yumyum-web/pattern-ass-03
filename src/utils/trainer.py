@@ -135,9 +135,9 @@ def train_model(
         Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
 
     if verbose:
-        print(f"\n[Training] Starting {num_epochs}-epoch training on device: {device}")
-        print(f"{'Epoch':^7} | {'Train Loss':^11} | {'Train Acc (%)':^13} | {'Val Loss':^10} | {'Val Acc (%)':^11} | {'Time (s)':^8}")
-        print("-" * 72)
+        print(f"\n[Training] Starting {num_epochs}-epoch training on device: {device}", flush=True)
+        print(f"{'Epoch':^7} | {'Train Loss':^11} | {'Train Acc (%)':^13} | {'Val Loss':^10} | {'Val Acc (%)':^11} | {'Time (s)':^8}", flush=True)
+        print("-" * 72, flush=True)
 
     total_start_time = time.time()
 
@@ -176,16 +176,16 @@ def train_model(
 
         if verbose:
             flag = " *" if is_best else ""
-            print(f"{epoch:^7d} | {train_loss:^11.4f} | {train_acc:^13.2f} | {val_loss:^10.4f} | {val_acc:^11.2f} | {epoch_duration:^8.2f}{flag}")
+            print(f"{epoch:^7d} | {train_loss:^11.4f} | {train_acc:^13.2f} | {val_loss:^10.4f} | {val_acc:^11.2f} | {epoch_duration:^8.2f}{flag}", flush=True)
 
     total_training_time = time.time() - total_start_time
     history["total_training_time"] = total_training_time
     history["mean_epoch_time"] = float(np.mean(history["epoch_times"]))
 
     if verbose:
-        print("-" * 72)
-        print(f"[Training Complete] Best Val Acc: {history['best_val_acc']:.2f}% at Epoch {history['best_epoch']}")
-        print(f"Total Time: {total_training_time:.2f}s | Mean Epoch Time: {history['mean_epoch_time']:.2f}s/epoch\n")
+        print("-" * 72, flush=True)
+        print(f"[Training Complete] Best Val Acc: {history['best_val_acc']:.2f}% at Epoch {history['best_epoch']}", flush=True)
+        print(f"Total Time: {total_training_time:.2f}s | Mean Epoch Time: {history['mean_epoch_time']:.2f}s/epoch\n", flush=True)
 
     return history
 
