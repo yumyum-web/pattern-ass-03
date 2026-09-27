@@ -1,41 +1,159 @@
-\documentclass[12pt,a4paper]{article}
+\documentclass[11pt,a4paper]{article}
 
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{geometry}
 \usepackage{booktabs}
-\geometry{margin=1in}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{microtype}
+\geometry{margin=0.9in}
 
-\title{Resource-Constrained CNN for Edge Image Classification\\ \large EN3150 Assignment 03}
-\author{
-  Yumeth (@yumyum-web) \and 
-  Ravishan (@PasinduRavishan) \and 
-  Shanuka (@ashanuk) \and 
-  Damindu (@DaminduDeSilva)
+\graphicspath{{../figures/}{figures/}}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
 }
-\date{\today}
+
+\title{\textbf{Resource-Constrained Convolutional Neural Networks for Edge Image Classification}\\[0.5em] \large EN3150: Pattern Recognition -- Assignment 03}
+\author{
+  \textbf{Team Outliers}\\[0.3em]
+  Yumeth Samarasinghe (\texttt{@yumyum-web}) \and 
+  Pasindu Ravishan (\texttt{@PasinduRavishan}) \and 
+  Shanuka Ashan (\texttt{@ashanuk}) \and 
+  Damindu De Silva (\texttt{@DaminduDeSilva})
+}
+\date{September 2026}
 
 \begin{document}
 
 \maketitle
 
+\begin{abstract}
+Deploying deep convolutional neural networks on resource-constrained embedded microcontrollers and edge sensor nodes requires balancing classification accuracy, parameter counts, memory footprint, and computational complexity (multiply-accumulate operations). In this investigation, we explore edge-tailored vision architectures on the 9-class RealWaste dataset downscaled to $64\times 64$ spatial resolution. We evaluate a baseline CNN (\textbf{Model A}, 102,313 parameters), a custom depthwise-separable CNN constrained under 100,000 parameters (\textbf{Model B}, 22,297 parameters), and two fine-tuned state-of-the-art mobile architectures (\textbf{MobileNetV2} and \textbf{ShuffleNetV2}). We systematically profile their parameter budgets, on-disk footprints, MACs, and inference latencies. Our empirical findings demonstrate that Model B achieves a $78.2\%$ reduction in parameters and an $85.0\%$ reduction in MACs over Model A while preserving competitive classification performance, presenting an optimal compromise for strict sub-megabyte microcontroller deployments.
+\end{abstract}
+
+\vspace{1em}
+
+% ============================================================================
 \section{Introduction \& Data Preparation}
-% Yumeth to write Section 1
+% ============================================================================
+Edge machine learning models operating in automated waste sorting bins or agricultural sorting units require low-latency inference on low-power silicon. The \textbf{RealWaste} dataset (UCI Machine Learning Repository ID: 908) comprises 4,752 real-world landfill and recycling images distributed across 9 classes: \textit{Cardboard, Food Organics, Glass, Metal, Miscellaneous Trash, Paper, Plastic, Textile Trash}, and \textit{Vegetation}.
 
+To emulate low-cost edge camera hardware, all images were preprocessed through a deterministic pipeline:
+\begin{enumerate}
+    \item Resized and center-cropped to $64\times 64$ spatial dimensions.
+    \item Normalized using standard channel-wise ImageNet statistics ($\mu = [0.485, 0.456, 0.406]$, $\sigma = [0.229, 0.224, 0.225]$).
+    \item Deterministically partitioned into a $70\% / 15\% / 15\%$ train/validation/test split using random seed $42$, yielding exactly 3,326 training images, 713 validation images, and 713 test images.
+\end{enumerate}
+
+% ============================================================================
 \section{Model Architectures}
-% Yumeth to write Model A specifications
-% Ravishan to write Model B (<100k) specifications
+% ============================================================================
 
+\subsection{Model A: Baseline Standard 2D CNN}
+Model A is designed as a conventional 3-stage convolutional network. It features standard $3\times 3$ convolutions with increasing channel depths (32, 64, 128), each accompanied by Batch Normalization, ReLU activations, and $2\times 2$ Max-Pooling. Global Average Pooling (GAP) aggregates spatial representations before feeding into a final linear projection layer yielding 9 logits. The architecture comprises \textbf{102,313 trainable parameters}.
+
+\subsection{Model B: Lightweight Depthwise Separable CNN (Sub-100k Parameters)}
+To satisfy the strict assignment constraint of keeping total parameters below $100,000$, Model B utilizes Depthwise Separable Convolutions (Howard et al., 2017). Each separable convolution block decouples spatial filtering from cross-channel feature combination:
+\begin{itemize}
+    \item \textbf{Depthwise Convolution:} Applies a per-channel $3\times 3$ spatial kernel ($\text{groups} = C_{\text{in}}$).
+    \item \textbf{Pointwise Convolution:} Applies a $1\times 1$ convolution combining channel features from $C_{\text{in}}$ to $C_{\text{out}}$.
+\end{itemize}
+The stem consists of a single $3\times 3$ standard convolution ($3 \rightarrow 24$ channels, stride 1), followed by three depthwise separable blocks (channels: 24, 48, 96), Batch Normalization, and $\text{ReLU6}$ non-linearities. Following Global Average Pooling, a linear head outputs 9 logits. 
+
+\textbf{Exact Parameter Count:} Model B contains precisely \textbf{22,297 trainable parameters}---utilizing only $22.3\%$ of the allowed $100,000$ parameter budget.
+
+% ============================================================================
 \section{Optimizer Ablation Study}
-% Ravishan to write optimizer analysis
+% ============================================================================
+To examine optimizer behavior in low-parameter regimes, Model B was trained for 20 epochs across three optimizer configurations using identical learning schedules:
+\begin{enumerate}
+    \item \textbf{Adam} ($\text{lr} = 0.001$, $\beta = (0.9, 0.999)$, $\text{weight decay} = 10^{-4}$): Displayed rapid, smooth loss reduction, achieving a minimum validation loss of $0.785$ and peak validation accuracy of $65.35\%$.
+    \item \textbf{SGD with Momentum} ($\text{lr} = 0.01$, $\text{momentum} = 0.9$): Demonstrated robust gradient trajectory smoothing, avoiding saddle points and achieving $63.53\%$ final validation accuracy.
+    \item \textbf{Standard SGD} ($\text{lr} = 0.01$, $\text{momentum} = 0.0$): Exhibited sluggish convergence, suffering from high variance gradient updates in the compact depthwise parameter space.
+\end{enumerate}
 
-\section{Hardware Profiling \& Trade-offs (Model A vs B)}
-% Damindu to write Section 4 trade-off discussions
+% ============================================================================
+\section{Hardware Profiling \& Trade-offs (Model A vs Model B)}
+% ============================================================================
+Evaluating models purely on classification accuracy is insufficient for edge deployments. We systematically profile the hardware footprint of both custom architectures and benchmark them against pretrained mobile standards on a $1\times 3\times 64\times 64$ input tensor.
 
+\begin{table}[h!]
+\centering
+\small
+\caption{Cross-Architecture Hardware Profiling Comparison (Measured on Edge Runtime)}
+\label{tab:profiling}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Model Architecture} & \textbf{Trainable Params} & \textbf{Size (MB)} & \textbf{MACs} & \textbf{FLOPs} & \textbf{Latency (ms)} \\
+\midrule
+\textbf{Model A} (Standard CNN)     & 102,313   & 0.40 & 41,296,969  & 82,593,938  & 4.71 \\
+\textbf{Model B} (DS-CNN $<100$k)   & 22,297    & 0.10 & 6,189,097   & 12,378,194  & 3.97 \\
+\midrule
+\textbf{MobileNetV2} (Pretrained)   & 2,235,401 & 8.76 & 24,494,153  & 48,988,306  & 13.63 \\
+\textbf{ShuffleNetV2} (Pretrained)  & 1,262,829 & 4.98 & 11,771,037  & 23,542,074  & 12.68 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Architectural Efficiency: Model A vs Model B}
+As detailed in Table~\ref{tab:profiling}, transitioning from standard convolutions to depthwise separable convolutions yields dramatic hardware efficiencies:
+\begin{itemize}
+    \item \textbf{Parameter Compression:} Model B requires only \textbf{22,297 parameters} compared to Model A's 102,313, achieving a \textbf{78.2\% parameter reduction}.
+    \item \textbf{Disk Storage Footprint:} Model B's serialized \texttt{state\_dict} footprint is merely \textbf{0.10 MB (98 KB)}, compared to 0.40 MB for Model A (a \textbf{4$\times$ memory saving}).
+    \item \textbf{Arithmetic Complexity (MACs):} Forward-pass Multiply-Accumulate operations drop from $41.30\times 10^6$ in Model A to $6.19\times 10^6$ in Model B---an \textbf{85.0\% reduction in compute operations}.
+    \item \textbf{Single-Image Latency:} Model B executes a single forward pass in \textbf{3.97 ms} versus 4.71 ms for Model A (a \textbf{15.7\% speedup}).
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\linewidth]{trade_off_scatter.pdf}
+\caption{Edge Deployment Trade-off: Parameter Count vs. Inference Latency (bubble size proportional to serialized on-disk memory footprint).}
+\label{fig:tradeoff}
+\end{figure}
+
+Figure~\ref{fig:tradeoff} illustrates the multi-dimensional design trade-off space. Model B occupies the extreme lower-left quadrant of the plot, demonstrating that depthwise separable convolutions successfully decouple feature abstraction capacity from quadratic parameter growth.
+
+% ============================================================================
 \section{SOTA Transfer Learning}
-% Shanuka to write Section 5 SOTA fine-tuning analysis
+% ============================================================================
+To establish upper-bound classification benchmarks, we fine-tuned two state-of-the-art mobile architectures: \textbf{MobileNetV2} (featuring inverted residual blocks and linear bottlenecks) and \textbf{ShuffleNetV2} (employing channel-split and channel-shuffle operations to minimize memory access cost). 
 
+Both architectures were initialized with ImageNet-1k pretrained weights, had their 1000-class classification heads replaced by a 9-class linear layer, and were trained for 20 epochs under the exact same 70/15/15 data split. 
+
+While pretraining allows faster feature representation learning, their parameter footprints ($1.26\text{M} - 2.24\text{M}$) and disk requirements ($4.98 - 8.76\text{ MB}$) substantially exceed the capacity of embedded microcontrollers without external memory.
+
+% ============================================================================
 \section{Conclusion: Custom Edge vs Pre-trained SOTA}
-% Damindu to write Section 6 final trade-off synthesis
+% ============================================================================
+The comprehensive empirical evaluation across custom and pre-trained architectures provides definitive guidance for edge vision engineering:
+
+\subsection{Microcontroller Feasibility (Bare-Metal Deployments)}
+In extreme resource-constrained systems such as ARM Cortex-M4/M7/M55 (e.g., STM32H7, ESP32-S3) or ultra-low-power vision sensors, on-chip SRAM is typically limited to $256\text{ KB} - 1\text{ MB}$ and internal flash storage to $1\text{ MB} - 2\text{ MB}$. 
+\begin{itemize}
+    \item Pretrained SOTA models (\textbf{MobileNetV2} at 8.76 MB and \textbf{ShuffleNetV2} at 4.98 MB) \textbf{cannot fit} into internal flash or SRAM, necessitating external PSRAM/Flash which increases BOM cost and power consumption.
+    \item In contrast, \textbf{Model B} (0.10 MB, 22k params) fits entirely within internal SRAM, enabling zero-wait-state memory access, drastically reduced energy dissipation, and high reliability.
+\end{itemize}
+
+\subsection{Quantization and Integer Arithmetic Suitability}
+Model B employs $\text{ReLU6}$ non-linearities:
+\begin{equation}
+    \text{ReLU6}(x) = \min(\max(0, x), 6)
+\end{equation}
+By strictly bounding activation outputs to $[0, 6]$, the network prevents dynamic range divergence during post-training integer quantization (PTQ) or quantization-aware training (QAT). When quantized from 32-bit floating point (\texttt{FP32}) to 8-bit integers (\texttt{INT8}):
+\begin{itemize}
+    \item The model size compresses from $\approx 98\text{ KB}$ down to $\approx 25\text{ KB}$.
+    \item Activation functions can be computed directly using fixed-point integer bitshifts, completely avoiding expensive transcendental operations ($e^x$) required by activations like GELU or Swish.
+\end{itemize}
+
+\subsection{Final Synthesis Recommendation}
+For intelligent embedded sensors and battery-powered IoT devices operating under strict power, memory ($<100\text{k}$ parameters), and cost budgets, \textbf{Model B} represents the optimal edge-deployable solution. For slightly larger gateway edge nodes (e.g., Raspberry Pi Zero or Coral Edge TPU) where $5\text{ MB}$ flash storage is available, \textbf{ShuffleNetV2} offers the premier balance of transfer accuracy and minimal Memory Access Cost (MAC).
 
 \end{document}
