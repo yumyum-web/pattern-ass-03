@@ -1,85 +1,171 @@
+"""
+Cross-Architecture Benchmarking Suite.
+
+Profiles all four project models (Model A, Model B, MobileNetV2, ShuffleNetV2)
+across five hardware-relevant metrics and outputs comparison tables in both
+Markdown and LaTeX formats. Also generates a trade-off scatter plot.
+
+Usage (run from repo root):
+    python experiments/benchmark_all.py
+
+Colab usage:
+    !pip install torchinfo
+    !python experiments/benchmark_all.py
+"""
+
 import os
 import sys
-import time
-import torch
-import torchvision.models as models
 
-# Ensure we can import from src
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.utils.profiler import get_parameter_count, get_model_size_mb, get_flops_and_macs
+# Ensure repo root is importable
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import torch
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from src.models.model_a import create_model_a
+from src.models.model_b import ModelB
+from src.models.sota_models import get_mobilenet_v2, get_shufflenet_v2
+from src.utils.profiler import (
+    get_parameter_count,
+    get_model_size,
+    get_flops_and_macs,
+    measure_inference_latency,
+)
+
 
 def benchmark_model(model_name, model, input_size=(1, 3, 64, 64)):
-    print(f"Benchmarking {model_name}...")
-    
-    # 1. Parameter count
-    params = get_parameter_count(model)
-    
-    # 2. Disk Size
-    size_kb, size_mb = get_model_size_mb(model)
-    
-    # 3. MACs / FLOPs
+    """Profiles a single model across all hardware metrics."""
+    print(f"  Benchmarking {model_name}...")
+
+    trainable, total = get_parameter_count(model)
+    size_kb, size_mb = get_model_size(model)
     macs, flops = get_flops_and_macs(model, input_size)
-    
-    # 4. Latency / dummy training time test
-    # We do a quick dummy forward pass timing as a placeholder for actual training time
-    model.eval()
-    dummy_input = torch.randn(*input_size)
-    
-    # Warmup
-    with torch.no_grad():
-        for _ in range(5):
-            _ = model(dummy_input)
-            
-        start_time = time.time()
-        for _ in range(100):
-            _ = model(dummy_input)
-        end_time = time.time()
-        
-    avg_latency_ms = ((end_time - start_time) / 100.0) * 1000
-    
+    latency_ms = measure_inference_latency(model, input_size)
+
     return {
         "Model": model_name,
-        "Parameters": f"{params:,}",
-        "Size (KB)": f"{size_kb:.2f}",
-        "Size (MB)": f"{size_mb:.2f}",
-        "MACs": f"{macs:,}" if isinstance(macs, int) else macs,
-        "Latency (ms)": f"{avg_latency_ms:.2f}"
+        "Trainable Params": trainable,
+        "Total Params": total,
+        "Size (KB)": size_kb,
+        "Size (MB)": size_mb,
+        "MACs": macs,
+        "FLOPs": flops,
+        "Latency (ms)": latency_ms,
     }
 
-if __name__ == "__main__":
-    print("--- Starting Edge Architecture Profiler ---\n")
-    
-    # In the future, you will import Model A, Model B, MobileNet, and ShuffleNet here.
-    # For now, we use dummy torchvision models to prove the generic profiler works!
-    
-    dummy_models = {
-        "Dummy_CNN_Small (ResNet18)": models.resnet18(num_classes=9),
-        "Dummy_CNN_Tiny (SqueezeNet)": models.squeezenet1_0(num_classes=9)
-    }
-    
-    results = []
-    for name, model in dummy_models.items():
-        results.append(benchmark_model(name, model))
-        
-    # Output Markdown Table
-    print("\n### Cross-Architecture Comparison (Markdown)\n")
-    print("| Model | Parameters | Size (KB) | Size (MB) | MACs | Latency (ms) |")
-    print("| :--- | :--- | :--- | :--- | :--- | :--- |")
+
+def print_markdown_table(results):
+    """Prints a clean Markdown comparison table."""
+    print("\n### Cross-Architecture Hardware Comparison\n")
+    print("| Model | Trainable Params | Size (MB) | MACs | Latency (ms) |")
+    print("| :--- | ---: | ---: | ---: | ---: |")
     for r in results:
-        print(f"| {r['Model']} | {r['Parameters']} | {r['Size (KB)']} | {r['Size (MB)']} | {r['MACs']} | {r['Latency (ms)']} |")
-        
-    # Output LaTeX Tabular Block
-    print("\n### LaTeX Tabular Block\n")
+        macs_str = f"{r['MACs']:,}" if isinstance(r["MACs"], int) else r["MACs"]
+        print(
+            f"| {r['Model']} "
+            f"| {r['Trainable Params']:,} "
+            f"| {r['Size (MB)']:.2f} "
+            f"| {macs_str} "
+            f"| {r['Latency (ms)']:.2f} |"
+        )
+
+
+def print_latex_table(results):
+    """Prints a LaTeX tabular block for the report."""
+    print("\n% --- Paste this into report/Outliers_A03_EN3150.tex ---")
     print("\\begin{table}[h!]")
     print("\\centering")
-    print("\\begin{tabular}{|l|r|r|r|r|r|}")
-    print("\\hline")
-    print("Model & Parameters & Size (KB) & Size (MB) & MACs & Latency (ms) \\\\ \\hline")
-    for r in results:
-        print(f"{r['Model']} & {r['Parameters']} & {r['Size (KB)']} & {r['Size (MB)']} & {r['MACs']} & {r['Latency (ms)']} \\\\")
-    print("\\hline")
-    print("\\end{tabular}")
-    print("\\caption{Hardware Profiling Comparison}")
+    print("\\caption{Cross-Architecture Hardware Profiling Comparison}")
     print("\\label{tab:profiling}")
-    print("\\end{table}\n")
-    print("Benchmarking Complete! When Model A and Model B are pushed, simply swap them into the `dummy_models` dictionary.")
+    print("\\begin{tabular}{lrrrr}")
+    print("\\toprule")
+    print("Model & Trainable Params & Size (MB) & MACs & Latency (ms) \\\\")
+    print("\\midrule")
+    for r in results:
+        macs_str = f"{r['MACs']:,}" if isinstance(r["MACs"], int) else r["MACs"]
+        print(
+            f"{r['Model']} & {r['Trainable Params']:,} & {r['Size (MB)']:.2f} "
+            f"& {macs_str} & {r['Latency (ms)']:.2f} \\\\"
+        )
+    print("\\bottomrule")
+    print("\\end{tabular}")
+    print("\\end{table}")
+
+
+def generate_tradeoff_scatter(results, save_path="figures/trade_off_scatter.pdf"):
+    """
+    Generates an Accuracy-vs-Parameters-vs-Latency scatter plot.
+    Note: Test accuracy is not available in this profiling-only script.
+    Uses parameter count on x-axis and latency on y-axis, with bubble size
+    proportional to model disk size.
+    """
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    names = [r["Model"] for r in results]
+    params = [r["Trainable Params"] for r in results]
+    latencies = [r["Latency (ms)"] for r in results]
+    sizes_mb = [r["Size (MB)"] for r in results]
+
+    # Bubble size proportional to disk footprint (scaled for visibility)
+    max_size = max(sizes_mb) if max(sizes_mb) > 0 else 1
+    bubble_sizes = [max(80, (s / max_size) * 800) for s in sizes_mb]
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    colors = ["#2196F3", "#4CAF50", "#FF9800", "#E91E63"]
+    for i, (name, p, lat, bs) in enumerate(zip(names, params, latencies, bubble_sizes)):
+        ax.scatter(p, lat, s=bs, c=colors[i % len(colors)], alpha=0.7,
+                   edgecolors="black", linewidth=0.8, zorder=3)
+        ax.annotate(name, (p, lat), textcoords="offset points",
+                    xytext=(10, 10), fontsize=8, fontweight="bold")
+
+    ax.set_xlabel("Trainable Parameters", fontsize=11, fontweight="bold")
+    ax.set_ylabel("Inference Latency (ms)", fontsize=11, fontweight="bold")
+    ax.set_title(
+        "Edge Deployment Trade-off: Parameters vs Latency\n(Bubble size ∝ Disk Footprint)",
+        fontsize=13, fontweight="bold", pad=15
+    )
+    ax.set_xscale("log")
+    ax.grid(True, alpha=0.3, linestyle="--")
+    plt.tight_layout()
+    plt.savefig(save_path, bbox_inches="tight", dpi=150)
+    plt.close(fig)
+    print(f"\n[Benchmark] Trade-off scatter plot saved to '{save_path}'")
+
+
+if __name__ == "__main__":
+    print("=" * 65)
+    print("  Edge Architecture Profiler — Cross-Model Comparison")
+    print("=" * 65)
+
+    # Instantiate all 4 project models
+    models_to_benchmark = {
+        "Model A (Standard CNN)": create_model_a(num_classes=9),
+        "Model B (DS-CNN <100k)": ModelB(num_classes=9),
+        "MobileNetV2 (SOTA)": get_mobilenet_v2(num_classes=9, pretrained=False),
+        "ShuffleNetV2 (SOTA)": get_shufflenet_v2(num_classes=9, pretrained=False),
+    }
+
+    print(f"\nProfiling {len(models_to_benchmark)} architectures on input (1, 3, 64, 64)...\n")
+
+    results = []
+    for name, model in models_to_benchmark.items():
+        results.append(benchmark_model(name, model))
+
+    # Print tables
+    print_markdown_table(results)
+    print_latex_table(results)
+
+    # Generate scatter plot
+    generate_tradeoff_scatter(results)
+
+    # Summary printout
+    print("\n" + "=" * 65)
+    print("  Quick Summary")
+    print("=" * 65)
+    for r in results:
+        print(f"  {r['Model']:<28s} | {r['Trainable Params']:>10,} params | {r['Size (MB)']:>7.2f} MB | {r['Latency (ms)']:>7.2f} ms")
+    print("=" * 65)
+    print("\nBenchmarking complete!")
