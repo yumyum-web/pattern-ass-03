@@ -22,8 +22,12 @@ import seaborn as sns
 
 
 def get_default_device() -> torch.device:
-    """Returns CUDA device if available, otherwise CPU."""
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """Returns CUDA device if available, MPS for Apple Silicon, otherwise CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def train_one_epoch(
@@ -281,7 +285,9 @@ def plot_training_curves(
     ax2.legend(frameon=True, facecolor="white", framealpha=0.9)
 
     plt.tight_layout()
-    plt.savefig(save_path, bbox_inches="tight")
+    base_path = Path(save_path).with_suffix("")
+    plt.savefig(base_path.with_suffix(".pdf"), bbox_inches="tight")
+    plt.savefig(base_path.with_suffix(".png"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -293,6 +299,7 @@ def plot_confusion_matrix_heatmap(
 ) -> None:
     """
     Plots a professional, annotated 9x9 confusion matrix heatmap.
+    Exports both vector PDF and PNG formats.
     """
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -315,5 +322,8 @@ def plot_confusion_matrix_heatmap(
     plt.xticks(rotation=40, ha="right", fontsize=9)
     plt.yticks(rotation=0, fontsize=9)
     plt.tight_layout()
-    plt.savefig(save_path, bbox_inches="tight")
+    base_path = Path(save_path).with_suffix("")
+    plt.savefig(base_path.with_suffix(".pdf"), bbox_inches="tight")
+    plt.savefig(base_path.with_suffix(".png"), bbox_inches="tight")
     plt.close(fig)
+
