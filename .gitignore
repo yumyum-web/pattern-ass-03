@@ -32,3 +32,8 @@ TEAM_PLAN.md
 # Local Colab test runner (not for GitHub)
 test_on_colab.py
 test_on_colab.ipynb
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
