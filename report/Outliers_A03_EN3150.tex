@@ -85,7 +85,7 @@ Deploying vision-based automated material sorting on autonomous recycling collec
 
 In this investigation, Team Outliers investigates the design, parameter optimization, arithmetic complexity, and hardware profiling of edge-oriented vision models on the 9-class RealWaste dataset downscaled to $64 \times 64$ resolution. We design a conventional 3-stage convolutional network (\textbf{Model A}, 102,313 parameters) and architect a highly compact depthwise-separable network (\textbf{Model B}, 22,297 parameters) engineered strictly beneath the 100,000 parameter budget. Furthermore, we benchmark these custom models against fine-tuned state-of-the-art mobile backbones (\textbf{MobileNetV2} and \textbf{ShuffleNetV2 1.0$\times$}). 
 
-Our empirical results demonstrate that Model B achieves \textbf{69.85\% top-1 test accuracy}, surpassing Model A (67.32\%) while reducing parameter count by \textbf{78.2\%} and multiply-accumulate operations (MACs) by \textbf{85.0\%} (from 41.30M to 6.19M). Model B occupies only \textbf{0.10\,MB (98\,KB)} of serialized memory, making it uniquely suited for on-chip deployment on resource-constrained microcontrollers like the STM32H7 or ESP32-S3. Conversely, while MobileNetV2 and ShuffleNetV2 achieve higher classification accuracy (88.22\% and 88.64\%), their substantial flash footprints ($>4.9$\,MB) and memory traffic render them prohibitive for microcontrollers, establishing an empirical Pareto frontier for smart recycling edge infrastructure.
+Our empirical results demonstrate that Model B achieves \textbf{69.85\% top-1 test accuracy}, matching Model A (67.32\%; the gap is within single-seed noise) while reducing parameter count by \textbf{78.2\%} and multiply-accumulate operations (MACs) by \textbf{85.0\%} (from 41.30M to 6.19M). Model B occupies only \textbf{105\,KB} of serialized memory, making it uniquely suited for on-chip deployment on resource-constrained microcontrollers like the STM32H7 or ESP32-S3. Conversely, while MobileNetV2 and ShuffleNetV2 achieve higher classification accuracy (89.62\% and 87.80\%), their substantial flash footprints ($>4.9$\,MB) and memory traffic render them prohibitive for microcontrollers, establishing an empirical Pareto frontier for smart recycling edge infrastructure.
 
 \newpage
 \tableofcontents
@@ -117,7 +117,7 @@ This investigation explores these trade-offs by evaluating custom convolutional 
 \subsection{Dataset Formulation and Environmental Realism}
 We utilize the RealWaste benchmark from the UCI Machine Learning Repository~\cite{realwaste2023}. Unlike pristine laboratory datasets, RealWaste depicts municipal waste items under uncontrolled lighting, deformation, partial occlusion, and complex backgrounds.
 
-The dataset spans 9 distinct classes: \textit{Cardboard}, \textit{Food Organics}, \textit{Glass}, \textit{Metal}, \textit{Miscellaneous Trash}, \textit{Paper}, \textit{Plastic}, \textit{Textile Trash}, and \textit{Vegetation}. The original images are downscaled to $64 \times 64 \times 3$ RGB tensors. This reduces raw frame size from 147\,KB ($224 \times 224$) to approximately 12\,KB ($64 \times 64$) --- a 91.8\% reduction in sensor buffer requirements, making real-time streaming viable on low-speed SPI/DVP camera interfaces.
+The dataset spans 9 distinct classes: \textit{Cardboard}, \textit{Food Organics}, \textit{Glass}, \textit{Metal}, \textit{Miscellaneous Trash}, \textit{Paper}, \textit{Plastic}, \textit{Textile Trash}, and \textit{Vegetation}. The original images are downscaled to $64 \times 64 \times 3$ RGB tensors. This reduces the raw 8-bit frame size from 805\,KB (native $524 \times 524$) to 12\,KB ($64 \times 64$) --- a 98.5\% reduction in sensor buffer requirements, making real-time streaming viable on low-speed SPI/DVP camera interfaces.
 
 \subsection{Deterministic Stratified Partitioning}
 To prevent data leakage and guarantee reproducible evaluation, the 4,752 images are partitioned into training, validation, and test sets using a fixed stratified split of 70\% (3,326 images), 15\% (713 images), and 15\% (713 images) using random seed 42.
@@ -129,7 +129,7 @@ To prevent data leakage and guarantee reproducible evaluation, the 4,752 images 
   \label{fig:class_distribution}
 \end{figure}
 
-Table~\ref{tab:split} summarizes the split statistics. The natural class imbalance --- where \textit{Plastic} and \textit{Vegetation} represent large shares while \textit{Textile Trash} is less frequent --- is accurately mirrored across all subsets.
+Table~\ref{tab:split} summarizes the split statistics. The natural class imbalance --- where \textit{Plastic} (921 images) and \textit{Metal} (790) represent large shares while \textit{Textile Trash} (318) is least frequent --- is accurately mirrored across all subsets.
 
 \begin{table}[H]
   \centering
@@ -151,7 +151,7 @@ Table~\ref{tab:split} summarizes the split statistics. The natural class imbalan
 \end{table}
 
 \subsection{Preprocessing and Augmentation Strategy}
-Inputs are normalized using channel statistics ($\mu = [0.485, 0.456, 0.406]$, $\sigma = [0.229, 0.224, 0.225]$). Training tensors undergo random horizontal flips ($p=0.5$), random vertical flips ($p=0.2$), and slight affine rotations ($\pm 10^\circ$) to mitigate overfitting on smaller sample classes without corrupting spatial geometry.
+Inputs are normalized using channel statistics ($\mu = [0.485, 0.456, 0.406]$, $\sigma = [0.229, 0.224, 0.225]$). Training tensors undergo random horizontal flips ($p=0.5$) and random $64 \times 64$ crops after 4-pixel reflection padding (small translations) to mitigate overfitting on smaller sample classes without corrupting spatial geometry. Validation and test images receive no augmentation.
 
 %==============================================================================
 \section{Architectural Design: Baseline vs. Depthwise Separable CNN}
@@ -189,19 +189,19 @@ For $3 \times 3$ kernels ($K=3$), this yields an asymptotic $8 \times$ to $9 \ti
 \subsection{Baseline Architecture: Model A}
 Model A serves as a standard convolutional reference. It consists of three cascaded convolutional stages with filter counts of 32, 64, and 128:
 \begin{itemize}[leftmargin=*,itemsep=1pt]
-  \item \textbf{Stage 1:} $\text{Conv2d}(3 \to 32, K=3, P=1) \to \text{BatchNorm} \to \text{ReLU} \to \text{MaxPool2d}(2)$
+  \item \textbf{Stage 1:} $\text{Conv2d}(3 \to 32, K=3, P=1) \to \text{BatchNorm}~\cite{batchnorm} \to \text{ReLU} \to \text{MaxPool2d}(2)$
   \item \textbf{Stage 2:} $\text{Conv2d}(32 \to 64, K=3, P=1) \to \text{BatchNorm} \to \text{ReLU} \to \text{MaxPool2d}(2)$
   \item \textbf{Stage 3:} $\text{Conv2d}(64 \to 128, K=3, P=1) \to \text{BatchNorm} \to \text{ReLU} \to \text{MaxPool2d}(2)$
-  \item \textbf{Classifier:} Global Average Pooling (GAP) $\to \text{Dropout}(0.3) \to \text{Linear}(128 \to 9)$.
+  \item \textbf{Classifier:} Global Average Pooling (GAP) $\to \text{Linear}(128 \to 64) \to \text{ReLU} \to \text{Dropout}(0.2) \to \text{Linear}(64 \to 9)$.
 \end{itemize}
 
 \textbf{Parameter Calculation for Model A:}
 \begin{itemize}[leftmargin=*,itemsep=1pt]
-  \item Conv1: $(3 \times 3 \times 3) \times 32 + 32 = 896$ params; BN1: $2 \times 32 = 64$ params.
-  \item Conv2: $(3 \times 3 \times 32) \times 64 + 64 = 18,496$ params; BN2: $2 \times 64 = 128$ params.
-  \item Conv3: $(3 \times 3 \times 64) \times 128 + 128 = 73,856$ params; BN3: $2 \times 128 = 256$ params.
-  \item Linear: $128 \times 9 + 9 = 1,161$ params.
-  \item \textbf{Total Model A Parameters:} $896 + 64 + 18,496 + 128 + 73,856 + 256 + 1,161 = \mathbf{102,313}$.
+  \item Conv1: $(3 \times 3 \times 3) \times 32 = 864$ params (no bias, as BatchNorm follows); BN1: $2 \times 32 = 64$ params.
+  \item Conv2: $(3 \times 3 \times 32) \times 64 = 18,432$ params; BN2: $2 \times 64 = 128$ params.
+  \item Conv3: $(3 \times 3 \times 64) \times 128 = 73,728$ params; BN3: $2 \times 128 = 256$ params.
+  \item FC1: $128 \times 64 + 64 = 8,256$ params; FC2: $64 \times 9 + 9 = 585$ params.
+  \item \textbf{Total Model A Parameters:} $864 + 64 + 18,432 + 128 + 73,728 + 256 + 8,256 + 585 = \mathbf{102,313}$.
 \end{itemize}
 
 \subsection{Lightweight Architecture: Model B ($<100,000$ Parameters)}
@@ -210,7 +210,7 @@ Model B is purpose-built to comply strictly with the assignment requirement of s
   \item A compact standard convolution stem ($3 \to 24$ channels) to encode low-level RGB edges.
   \item Three Depthwise Separable Blocks ($24 \to 48$, $48 \to 96$, $96 \to 128$).
   \item $\text{ReLU6}$ non-linearities: $\text{ReLU6}(x) = \min(\max(0, x), 6)$. Bounding activations prevents numerical dynamic-range overflow and facilitates quantization into 8-bit fixed-point integers (INT8).
-  \item Global Average Pooling eliminating heavy dense layers before the 9-class linear projection.
+  \item Global Average Pooling~\cite{gap} and $\text{Dropout}(0.2)$ before a single 9-class linear projection (no hidden dense layer). All convolutions omit bias terms because BatchNorm's shift $\beta$ makes them redundant.
 \end{enumerate}
 
 \begin{table}[H]
@@ -224,14 +224,14 @@ Model B is purpose-built to comply strictly with the assignment requirement of s
     \cmidrule(lr){1-3}\cmidrule(lr){4-6}
     \textbf{Layer Type} & \textbf{Output Shape} & \textbf{Params} & \textbf{Layer Type} & \textbf{Output Shape} & \textbf{Params} \\
     \midrule
-    Conv2d + BN & $32 \times 64 \times 64$ & 960 & Stem Conv2d + BN & $24 \times 64 \times 64$ & 696 \\
+    Conv2d + BN & $32 \times 64 \times 64$ & 928 & Stem Conv2d + BN & $24 \times 64 \times 64$ & 696 \\
     MaxPool2d   & $32 \times 32 \times 32$ & 0   & MaxPool2d        & $24 \times 32 \times 32$ & 0 \\
-    Conv2d + BN & $64 \times 32 \times 32$ & 18,624 & DS-Block 1 (DW+PW) & $48 \times 32 \times 32$ & 1,536 \\
+    Conv2d + BN & $64 \times 32 \times 32$ & 18,560 & DS-Block 1 (DW+PW) & $48 \times 32 \times 32$ & 1,512 \\
     MaxPool2d   & $64 \times 16 \times 16$ & 0   & MaxPool2d        & $48 \times 16 \times 16$ & 0 \\
-    Conv2d + BN & $128 \times 16 \times 16$ & 74,112 & DS-Block 2 (DW+PW) & $96 \times 16 \times 16$ & 5,280 \\
+    Conv2d + BN & $128 \times 16 \times 16$ & 73,984 & DS-Block 2 (DW+PW) & $96 \times 16 \times 16$ & 5,328 \\
     MaxPool2d   & $128 \times 8 \times 8$ & 0   & MaxPool2d        & $96 \times 8 \times 8$   & 0 \\
-    ---         & ---                     & --- & DS-Block 3 (DW+PW) & $128 \times 8 \times 8$  & 13,624 \\
-    GAP + Dense & $9$                     & 1,161 & GAP + Dense      & $9$                      & 1,161 \\
+    ---         & ---                     & --- & DS-Block 3 (DW+PW) & $128 \times 8 \times 8$  & 13,600 \\
+    GAP + 2 FC    & $9$                   & 8,841 & GAP + Dense      & $9$                      & 1,161 \\
     \midrule
     \textbf{Total} & \textbf{Params} & \textbf{102,313} & \textbf{Total} & \textbf{Params} & \textbf{22,297} \\
     \bottomrule
@@ -250,17 +250,17 @@ Model A utilizes standard 2D convolutions followed by spatial pooling:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
   \item \textbf{Stage 1 Convolution (Conv1):} Accepts 3 RGB input channels and projects them into 32 feature maps using $3 \times 3$ kernels:
   \begin{equation}
-    P_{\text{Conv1}} = (K_h \times K_w \times C_{in} + 1) \times C_{out} = (3 \times 3 \times 3 + 1) \times 32 = 28 \times 32 = 896
+    P_{\text{Conv1}} = K_h \times K_w \times C_{in} \times C_{out} = 3 \times 3 \times 3 \times 32 = 864
   \end{equation}
   The subsequent Batch Normalization layer maintains trainable scale ($\gamma$) and shift ($\beta$) vectors:
   \begin{equation}
     P_{\text{BN1}} = 2 \times C_{out} = 2 \times 32 = 64
   \end{equation}
-  Max pooling operates with kernel size $2 \times 2$ and stride 2, reducing the spatial dimension from $64 \times 64$ to $32 \times 32$ without introducing trainable parameters.
+  No convolution bias is used: the following BatchNorm shift $\beta$ would absorb it. Max pooling operates with kernel size $2 \times 2$ and stride 2, reducing the spatial dimension from $64 \times 64$ to $32 \times 32$ without introducing trainable parameters.
   
   \item \textbf{Stage 2 Convolution (Conv2):} Projects from 32 to 64 channels:
   \begin{equation}
-    P_{\text{Conv2}} = (3 \times 3 \times 32 + 1) \times 64 = 289 \times 64 = 18,496
+    P_{\text{Conv2}} = 3 \times 3 \times 32 \times 64 = 18,432
   \end{equation}
   \begin{equation}
     P_{\text{BN2}} = 2 \times 64 = 128
@@ -269,21 +269,21 @@ Model A utilizes standard 2D convolutions followed by spatial pooling:
   
   \item \textbf{Stage 3 Convolution (Conv3):} Projects from 64 to 128 channels:
   \begin{equation}
-    P_{\text{Conv3}} = (3 \times 3 \times 64 + 1) \times 128 = 577 \times 128 = 73,856
+    P_{\text{Conv3}} = 3 \times 3 \times 64 \times 128 = 73,728
   \end{equation}
   \begin{equation}
     P_{\text{BN3}} = 2 \times 128 = 256
   \end{equation}
   Spatial pooling reduces the feature map from $16 \times 16$ to $8 \times 8$.
   
-  \item \textbf{Classification Head:} Global Average Pooling (GAP) aggregates each $8 \times 8$ activation slice into a single spatial mean, producing a 128-dimensional latent vector. The final dense projection layer computes class logits:
+  \item \textbf{Classification Head:} Global Average Pooling (GAP) aggregates each $8 \times 8$ activation slice into a single spatial mean, producing a 128-dimensional latent vector, followed by a 64-unit hidden layer (ReLU, Dropout 0.2) and the 9-class output layer:
   \begin{equation}
-    P_{\text{Dense}} = C_{in} \times N_{\text{classes}} + N_{\text{classes}} = 128 \times 9 + 9 = 1,161
+    P_{\text{FC1}} = 128 \times 64 + 64 = 8,256, \qquad P_{\text{FC2}} = 64 \times 9 + 9 = 585
   \end{equation}
 \end{enumerate}
 Summing all components yields exactly:
 \begin{equation}
-  P_{\text{Total, Model A}} = 896 + 64 + 18,496 + 128 + 73,856 + 256 + 1,161 = 102,313
+  P_{\text{Total, Model A}} = 864 + 64 + 18,432 + 128 + 73,728 + 256 + 8,256 + 585 = 102,313
 \end{equation}
 
 \subsubsection{Model B Layer-by-Layer Parameter Breakdown}
@@ -291,37 +291,37 @@ Model B employs a compact standard stem followed by three depthwise separable bl
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
   \item \textbf{Stem Convolution:} Transforms the 3-channel input into 24 channels ($K=3, P=1$):
   \begin{equation}
-    P_{\text{Stem}} = (3 \times 3 \times 3 + 1) \times 24 = 28 \times 24 = 672, \qquad P_{\text{BN, Stem}} = 2 \times 24 = 48
+    P_{\text{Stem}} = 3 \times 3 \times 3 \times 24 = 648, \qquad P_{\text{BN, Stem}} = 2 \times 24 = 48
   \end{equation}
   Spatial pooling reduces the spatial resolution to $32 \times 32$.
   
   \item \textbf{DS-Block 1 ($24 \to 48$):}
   \begin{itemize}
-    \item Depthwise Conv ($K=3, G=24$): $(3 \times 3 \times 1 + 1) \times 24 = 10 \times 24 = 240$ params.
+    \item Depthwise Conv ($K=3, G=24$): $3 \times 3 \times 1 \times 24 = 216$ params (bias-free).
     \item Depthwise BN: $2 \times 24 = 48$ params.
-    \item Pointwise Conv ($K=1$): $(1 \times 1 \times 24 + 1) \times 48 = 25 \times 48 = 1,200$ params.
+    \item Pointwise Conv ($K=1$): $1 \times 1 \times 24 \times 48 = 1,152$ params.
     \item Pointwise BN: $2 \times 48 = 96$ params.
-    \item Block 1 Total: $240 + 48 + 1,200 + 96 = 1,584$ params.
+    \item Block 1 Total: $216 + 48 + 1,152 + 96 = 1,512$ params.
   \end{itemize}
   Spatial pooling reduces resolution to $16 \times 16$.
   
   \item \textbf{DS-Block 2 ($48 \to 96$):}
   \begin{itemize}
-    \item Depthwise Conv ($K=3, G=48$): $(3 \times 3 \times 1 + 1) \times 48 = 480$ params.
+    \item Depthwise Conv ($K=3, G=48$): $3 \times 3 \times 1 \times 48 = 432$ params.
     \item Depthwise BN: $2 \times 48 = 96$ params.
-    \item Pointwise Conv ($K=1$): $(1 \times 1 \times 48 + 1) \times 96 = 4,704$ params.
+    \item Pointwise Conv ($K=1$): $1 \times 1 \times 48 \times 96 = 4,608$ params.
     \item Pointwise BN: $2 \times 96 = 192$ params.
-    \item Block 2 Total: $480 + 96 + 4,704 + 192 = 5,472$ params.
+    \item Block 2 Total: $432 + 96 + 4,608 + 192 = 5,328$ params.
   \end{itemize}
   Spatial pooling reduces resolution to $8 \times 8$.
   
   \item \textbf{DS-Block 3 ($96 \to 128$):}
   \begin{itemize}
-    \item Depthwise Conv ($K=3, G=96$): $(3 \times 3 \times 1 + 1) \times 96 = 960$ params.
+    \item Depthwise Conv ($K=3, G=96$): $3 \times 3 \times 1 \times 96 = 864$ params.
     \item Depthwise BN: $2 \times 96 = 192$ params.
-    \item Pointwise Conv ($K=1$): $(1 \times 1 \times 96 + 1) \times 128 = 12,416$ params.
+    \item Pointwise Conv ($K=1$): $1 \times 1 \times 96 \times 128 = 12,288$ params.
     \item Pointwise BN: $2 \times 128 = 256$ params.
-    \item Block 3 Total: $960 + 192 + 12,416 + 256 = 13,824$ params.
+    \item Block 3 Total: $864 + 192 + 12,288 + 256 = 13,600$ params.
   \end{itemize}
   
   \item \textbf{Classification Head:} Global Average Pooling aggregates the $8 \times 8$ feature map into 128 channels. The linear projection to 9 logits requires:
@@ -331,12 +331,14 @@ Model B employs a compact standard stem followed by three depthwise separable bl
 \end{enumerate}
 Summing the stem, three depthwise separable blocks, and classifier head gives:
 \begin{equation}
-  P_{\text{Total, Model B}} = (672 + 48) + 1,584 + 5,472 + 13,824 + 1,161 = 22,297 \ll 100,000
+  P_{\text{Total, Model B}} = (648 + 48) + 1,512 + 5,328 + 13,600 + 1,161 = 22,297 \ll 100,000
 \end{equation}
 
 
 \subsection{Activation Function Selection and INT8 Quantization Bounds}
 In standard convolutional networks, unbounded non-linearities such as standard $\text{ReLU}(x) = \max(0, x)$ or $\text{LeakyReLU}$ are widely adopted. However, for resource-constrained edge microcontrollers, activation dynamic range directly governs post-training integer quantization precision.
+
+\textbf{Avoiding transcendental functions.} Both models use piecewise-linear activations. $\text{ReLU}(x) = \max(0, x)$ in Model A and $\text{ReLU6}$ in Model B compile to a single compare/select (or clamp) instruction per element. Sigmoid, $\tanh$, Swish and GELU all require an exponential (or an erf approximation), which on an FPU-less microcontroller becomes a polynomial or lookup-table routine costing tens of cycles per activation. The ReLU family also has a constant gradient on its active side (no saturation), which helped both networks train from scratch in 20 epochs, and its output is exactly zero for negative inputs, so INT8 kernels can skip zeros. Softmax, the only exponential in the network, is needed only during training (inside the cross-entropy loss). At inference the predicted class is simply $\arg\max$ of the logits, so a deployed model evaluates no exponentials at all.
 
 Model B deliberately deploys $\text{ReLU6}$:
 \begin{equation}
@@ -353,7 +355,7 @@ The justification is twofold:
     S_{\text{ReLU6}} \le \frac{6.0}{255} \approx 0.0235
   \end{equation}
   This guarantees high dynamic precision across all intermediate tensor maps.
-  \item \textbf{Hardware Acceleration without Floating-Point Units (FPUs):} Many embedded microcontrollers (e.g., ARM Cortex-M4 or ultra-low-power DSPs) lack hardware floating-point units. Quantizing Model B's weights and activations to INT8 enables pure 8-bit integer SIMD arithmetic via CMSIS-NN, yielding a $4 \times$ reduction in model memory (from 98\,KB down to $\approx 25$\,KB) and a $2 \times$ to $3 \times$ speedup in CPU cycle latency.
+  \item \textbf{Hardware Acceleration without Floating-Point Units (FPUs):} Many embedded microcontrollers (e.g., ARM Cortex-M4 or ultra-low-power DSPs) lack hardware floating-point units. Quantizing Model B's weights and activations to INT8 enables pure 8-bit integer SIMD arithmetic via CMSIS-NN, yielding a $4 \times$ reduction in weight memory (from 89\,KB of FP32 weights to $\approx 22$\,KB) and a typical $2 \times$ to $3 \times$ speedup reported for CMSIS-NN integer kernels (not measured in this work).
 \end{enumerate}
 
 \subsection{Receptive Field Analysis and Intermediate SRAM Memory Buffers}
@@ -407,7 +409,7 @@ Choosing the appropriate gradient descent optimizer is critical for training lig
 \begin{itemize}[leftmargin=*,itemsep=1pt]
   \item \textbf{Adam ($\alpha = 0.001$, $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\epsilon = 10^{-8}$):} Adaptive moment estimation maintaining running estimates of gradients and squared uncentered gradients.
   \item \textbf{Standard SGD ($\alpha = 0.01$, momentum $= 0.0$):} First-order stochastic descent without velocity accumulation.
-  \item \textbf{SGD with Momentum ($\alpha = 0.01$, $\beta = 0.9$):} Accumulates velocity vectors along consistent directional gradients:
+  \item \textbf{SGD with Momentum ($\alpha = 0.01$, $\beta = 0.9$):} Accumulates velocity vectors along consistent directional gradients (heavy-ball momentum~\cite{momentum}):
   \begin{equation}
     v_t = \beta v_{t-1} + \nabla_\theta \mathcal{L}(\theta_t), \qquad \theta_{t+1} = \theta_t - \alpha v_t
   \end{equation}
@@ -420,7 +422,30 @@ Choosing the appropriate gradient descent optimizer is critical for training lig
   \label{fig:optimizer_comparison}
 \end{figure}
 
-As shown in Figure~\ref{fig:optimizer_comparison}, Adam converges substantially faster and achieves superior stability, reaching \textbf{71.81\% validation accuracy}. Standard SGD exhibits severe gradient thrashing across steep loss ravines, reaching only 47.69\%. Introducing momentum ($\beta=0.9$) dampens transverse oscillations, boosting validation accuracy to 63.53\%. However, Adam's per-parameter adaptive learning rates remain superior for the disparate gradient scales inherent to depthwise versus pointwise layers.
+All three runs share the same seed, initial weights, data order and 20-epoch budget, with no learning-rate schedule. Table~\ref{tab:optimizer_results} summarizes the outcome.
+
+\begin{table}[H]
+  \centering
+  \caption{Optimizer ablation on Model B (20 epochs, seed 42, identical initialization).}
+  \label{tab:optimizer_results}
+  \resizebox{0.95\linewidth}{!}{%
+  \begin{tabular}{lrrrr}
+    \toprule
+    \textbf{Optimizer} & \textbf{Final Val Acc} & \textbf{Best Val Acc} & \textbf{Min Val Loss} & \textbf{First Epoch $\geq 50\%$} \\
+    \midrule
+    Adam ($\alpha=10^{-3}$) & \textbf{71.81\%} & \textbf{71.81\%} & \textbf{0.785} & \textbf{2} \\
+    SGD ($\alpha=10^{-2}$) & 47.69\% & 47.97\% & 1.493 & never \\
+    SGD + Momentum ($\alpha=10^{-2}$, $\beta=0.9$) & 63.53\% & 63.53\% & 0.961 & 7 \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+\textbf{Selected optimizer: Adam with $\alpha = 10^{-3}$.} Adam reaches 50\% validation accuracy by epoch 2 and ends highest (71.81\%) with the lowest validation loss. We chose $10^{-3}$ because it is the standard default from Kingma and Ba~\cite{adam}, and it trained Model B stably without a schedule or warm-up. Adam's per-parameter step sizes also suit Model B's mix of layers: a depthwise filter sees only one channel, whereas a pointwise filter sums over up to 96 channels, so their gradient magnitudes differ widely, and a single global SGD learning rate cannot fit both.
+
+\textbf{Plain SGD} does not oscillate: its validation loss falls smoothly and almost monotonically, from 2.11 to 1.49 (Figure~\ref{fig:optimizer_comparison}). It is simply \emph{slow}. With $\alpha = 10^{-2}$, each step moves only along the current mini-batch gradient, so after 20 epochs it is still far from convergence (47.69\%, never reaching 50\%).
+
+\textbf{Impact of momentum.} With momentum, the update is an exponentially weighted sum of past gradients. In a direction where gradients agree, the step grows towards $\alpha / (1 - \beta) = 10\alpha$, a tenfold larger effective step at $\beta = 0.9$. Components that flip sign between mini-batches partly cancel. In our runs this sped up convergence substantially (50\% reached at epoch 7 instead of never) and lifted final validation accuracy by 15.8 points (47.69\% $\to$ 63.53\%). The cost is visible in Figure~\ref{fig:optimizer_comparison}: the larger effective step makes the momentum trajectory much noisier, with validation-loss spikes at epochs 12 and 15 (back up to 1.38) where accumulated velocity overshoots. A larger $\beta$ would amplify both effects; a learning-rate decay schedule would be the usual remedy for the late-stage noise. Even with momentum, SGD still trails Adam by 8.3 points under the same budget.
 
 %==============================================================================
 \section{Custom Architecture Empirical Evaluation}
@@ -437,10 +462,10 @@ Both Model A and Model B were trained using Adam with learning rate $10^{-3}$ an
   \label{fig:training_curves}
 \end{figure}
 
-Model A rapidly fits the training data, exhibiting signs of mild generalization divergence by epoch 15 (training accuracy reaching 96.8\%, while validation accuracy plateaus at 65.5\%). In contrast, Model B exhibits tighter alignment between training and validation trajectories, achieving a peak validation accuracy of \textbf{69.28\%}. The reduced parameter space of depthwise separable blocks acts as an intrinsic structural regularizer.
+Neither model overfits within 20 epochs: training accuracy finishes at 69.66\% for Model A and 75.53\% for Model B, with validation accuracy close behind (best 65.50\% and \textbf{69.28\%} respectively). Model A's validation curve is markedly unstable. Without learning-rate annealing (a fixed rate was used for parity with Model B), its validation loss spikes at epochs 7, 14 and 18, where validation accuracy briefly drops to 35.7\% before recovering. Model B fits the training data \emph{better} than Model A despite having $4.6\times$ fewer parameters, so its advantage here is better optimization, not stronger regularization: Model A's extra capacity sits largely in the dropout-regularized dense head rather than in the convolutional features. Both models are evaluated at their best-validation checkpoint.
 
 \subsection{Test Set Classification Performance}
-On the unseen 713-image test partition, Model B achieves \textbf{69.85\% top-1 accuracy}, outperforming Model A's \textbf{67.32\%} by 2.53 percentage points, as summarized in Table~\ref{tab:test_metrics}.
+On the unseen 713-image test partition, Model B achieves \textbf{69.85\% top-1 accuracy}, ahead of Model A's \textbf{67.32\%} by 2.53 percentage points (18 images), as summarized in Table~\ref{tab:test_metrics}. With a single training seed and a 95\% binomial margin of roughly $\pm 3.4$ points on 713 images, this gap shows that Model B \emph{matches} Model A at 22\% of its parameter count; it is not evidence that Model B is strictly more accurate.
 
 \begin{table}[H]
   \centering
@@ -469,7 +494,7 @@ To contextualize custom model efficiency against industry standards, we fine-tun
   \item \textbf{ShuffleNetV2 1.0$\times$}~\cite{shufflenet}: Implements channel split operations and channel shuffling to maximize hardware memory efficiency and direct hardware metric speed.
 \end{itemize}
 
-Both models are initialized with ImageNet-1K pretrained weights. The final 1000-class dense classification heads are replaced with a RealWaste 9-class projection layer. Fine-tuning is conducted for 15 epochs using Adam ($\text{lr} = 10^{-4}$) and Cosine Annealing learning rate schedules.
+Both models are initialized with ImageNet-1K pretrained weights. The final 1000-class dense classification heads are replaced with a RealWaste 9-class projection layer. All layers are fine-tuned for 20 epochs with Adam ($\text{lr} = 10^{-3}$, weight decay $10^{-4}$), batch size 32 and a cosine-annealing schedule, on exactly the same 70/15/15 split as Models A and B. The best-validation checkpoint is evaluated on the test set.
 
 \begin{figure}[H]
   \centering
@@ -478,7 +503,7 @@ Both models are initialized with ImageNet-1K pretrained weights. The final 1000-
   \label{fig:confusion_matrices}
 \end{figure}
 
-As shown in the confusion matrices (Figure~\ref{fig:confusion_matrices}), transfer learning significantly improves discriminative capability on ambiguous classes. MobileNetV2 reaches \textbf{88.22\%} and ShuffleNetV2 achieves \textbf{88.64\%} test accuracy. Pretrained representations capture general texture and material boundaries that are difficult to learn from scratch with only 3,326 RealWaste samples.
+As shown in the confusion matrices (Figure~\ref{fig:confusion_matrices}), transfer learning significantly improves discriminative capability on ambiguous classes. MobileNetV2 reaches \textbf{89.62\%} (macro F1 89.78\%) and ShuffleNetV2 achieves \textbf{87.80\%} (macro F1 87.74\%) test accuracy, roughly 18--20 points above Model B. Pretrained representations capture general texture and material boundaries that are difficult to learn from scratch with only 3,326 RealWaste samples.
 
 %==============================================================================
 \section{Hardware Profiling and Multi-Dimensional Trade-off Analysis}
@@ -486,11 +511,12 @@ As shown in the confusion matrices (Figure~\ref{fig:confusion_matrices}), transf
 %==============================================================================
 
 \subsection{Benchmarking Suite and Hardware Profiling Methodology}
-Deploying vision models on edge processors requires profiling beyond parameter counts alone. We profile all four models using a standardized PyTorch benchmarking suite with input tensor shape $(1, 3, 64, 64)$:
+Deploying vision models on edge processors requires profiling beyond parameter counts alone. We profile all four models using a standardized PyTorch~\cite{pytorch} benchmarking suite with input tensor shape $(1, 3, 64, 64)$:
 \begin{itemize}[leftmargin=*,itemsep=1pt]
   \item \textbf{On-Disk Model Size:} Measured by serializing model weights and buffers to disk.
-  \item \textbf{Multiply-Accumulate Operations (MACs):} Formally calculated via \texttt{torchinfo}.
-  \item \textbf{Single-Image Inference Latency:} Evaluated on an isolated CPU thread over 100 timed iterations preceded by 10 warm-up runs.
+  \item \textbf{Multiply-Accumulate Operations (MACs):} Formally calculated via \texttt{torchinfo}~\cite{torchinfo}.
+  \item \textbf{Single-Image Inference Latency:} Measured on a Google Colab CPU instance (default PyTorch threading) over 100 timed iterations preceded by 10 warm-up runs. Absolute values are host-specific; relative ordering is what matters.
+  \item \textbf{Training Time per Epoch:} Mean wall-clock time per epoch over the full training run, measured on the same Apple-silicon (MPS) machine for all four models (batch 64 for Models A/B, 32 for the SOTA models).
 \end{itemize}
 
 \begin{table}[H]
@@ -498,18 +524,20 @@ Deploying vision models on edge processors requires profiling beyond parameter c
   \caption{Master hardware profiling and test set evaluation summary across all architectures.}
   \label{tab:master_summary}
   \resizebox{0.95\linewidth}{!}{%
-  \begin{tabular}{lrrrrr}
+  \begin{tabular}{lrrrrrr}
     \toprule
-    \textbf{Evaluated Model} & \textbf{Trainable Params} & \textbf{Disk Size} & \textbf{Forward MACs} & \textbf{CPU Latency} & \textbf{Test Acc} \\
+    \textbf{Evaluated Model} & \textbf{Trainable Params} & \textbf{Disk Size (KB)} & \textbf{Train Time / Epoch} & \textbf{Forward MACs} & \textbf{CPU Latency} & \textbf{Test Acc} \\
     \midrule
-    Model A (Baseline CNN) & 102,313 & 0.40 MB & 41,296,969 & 10.98 ms & 67.32\% \\
-    Model B (Lightweight DS-CNN) & \textbf{22,297} & \textbf{0.10 MB} & \textbf{6,189,097} & \textbf{7.90 ms} & \textbf{69.85\%} \\
-    MobileNetV2 (SOTA Fine-Tuned) & 2,235,401 & 8.76 MB & 24,494,153 & 31.72 ms & 88.22\% \\
-    ShuffleNetV2 1.0$\times$ (SOTA) & 1,262,829 & 4.98 MB & 11,771,037 & 31.03 ms & 88.64\% \\
+    Model A (Baseline CNN) & 102,313 & 408.5 & 11.26 s & 41,296,969 & 10.98 ms & 67.32\% \\
+    Model B (Lightweight DS-CNN) & \textbf{22,297} & \textbf{104.8} & 11.28 s & \textbf{6,189,097} & \textbf{7.90 ms} & 69.85\% \\
+    MobileNetV2 (SOTA Fine-Tuned) & 2,235,401 & 8,970 (8.76 MB) & 7.4 s & 24,494,153 & 31.72 ms & \textbf{89.62\%} \\
+    ShuffleNetV2 1.0$\times$ (SOTA) & 1,262,829 & 5,100 (4.98 MB) & 6.6 s & 11,771,037 & 31.03 ms & 87.80\% \\
     \bottomrule
   \end{tabular}%
   }
 \end{table}
+
+\textbf{Trade-offs of moving from standard to depthwise separable convolutions.} Model B cuts parameters by 78.2\% and MACs by 85.0\%, and its single-image CPU latency falls by 28\%, while test accuracy is statistically unchanged. Two results temper this. First, training time per epoch is \emph{identical} (11.26\,s vs.\ 11.28\,s): at $64 \times 64$ with batch 64, an epoch is dominated by data loading and per-layer kernel-launch overhead rather than arithmetic, and Model B has more layers (each DS block is two convolutions) with low arithmetic intensity. Second, the realized MAC reduction ($6.7\times$) is below the theoretical $8$--$9\times$ of Eq.~(5) because Model B's stem is still a standard convolution at full $64 \times 64$ resolution, accounting for 2.65M MACs (42.9\%) of Model B's total. The comparison also changes more than the convolution type: Model B uses narrower stages (24/48/96/128 vs.\ 32/64/128) and no hidden dense layer, so the savings are not attributable to depthwise separability alone.
 
 \subsection{The Memory Wall and Arithmetic Intensity Analysis}
 A critical takeaway emerges from Table~\ref{tab:master_summary}: \textbf{MAC operations do not directly correlate with latency on edge processors.}
@@ -518,7 +546,7 @@ While ShuffleNetV2 executes only 11.77M MACs compared to Model A's 41.30M MACs, 
 This apparent paradox is governed by the \textit{Memory Wall} and \textit{Arithmetic Intensity} ($I_A$, defined as FLOPs executed per byte of DRAM memory traffic):
 \begin{itemize}[leftmargin=*,itemsep=1pt]
   \item MobileNetV2 and ShuffleNetV2 contain hundreds of fragmented tensor operators, channel concatenation branches, and depthwise layers with low arithmetic intensity. Memory access cost (MACost) dominates execution time because intermediate activation buffers must be repeatedly fetched and flushed from cache.
-  \item Model B possesses a streamlined sequential topology with only 22,297 weights. Its entire parameter set (98\,KB) and intermediate activations fit comfortably inside the on-chip SRAM of microcontrollers (e.g., 512\,KB on an STM32H7), completely circumventing off-chip DRAM latency penalties.
+  \item Model B possesses a streamlined sequential topology with only 22,297 weights. Its parameter set (89\,KB in FP32, 22\,KB in INT8) and peak intermediate activations (147\,KB FP32, 37\,KB INT8) fit inside the on-chip SRAM of microcontrollers (e.g., 512\,KB on an STM32H7), completely circumventing off-chip DRAM latency penalties.
 \end{itemize}
 
 \begin{figure}[H]
@@ -528,10 +556,10 @@ This apparent paradox is governed by the \textit{Memory Wall} and \textit{Arithm
   \label{fig:trade_off_scatter}
 \end{figure}
 
-Figure~\ref{fig:trade_off_scatter} illustrates the multi-dimensional Pareto frontier. Model B occupies the optimal bottom-left quadrant: minimal parameter count, lowest latency (7.90\,ms), tiny disk footprint (0.10\,MB), and superior accuracy over baseline Model A.
+Figure~\ref{fig:trade_off_scatter} illustrates the multi-dimensional Pareto frontier. Model B occupies the optimal bottom-left quadrant: minimal parameter count, lowest latency (7.90\,ms), tiny disk footprint (105\,KB), and accuracy on par with baseline Model A.
 
 \subsection{Fixed-Point INT8 Post-Training Quantization Mathematical Analysis}
-While Model B is evaluated in single-precision floating point (FP32, 4 bytes per weight), real-world edge hardware acceleration (such as ARM Cortex-M CMSIS-NN kernels or ESP-NN vector extensions) mandates conversion to 8-bit integers (INT8, 1 byte per weight).
+While Model B is evaluated in single-precision floating point (FP32, 4 bytes per weight), real-world edge hardware acceleration (such as ARM Cortex-M CMSIS-NN kernels or ESP-NN vector extensions) mandates conversion to 8-bit integers (INT8, 1 byte per weight), following the integer-only inference scheme of Jacob et al.~\cite{quant}.
 
 \subsubsection{Uniform Affine vs. Symmetric Quantization}
 A continuous real-valued tensor $x \in [\alpha, \beta]$ is mapped into an 8-bit quantized integer $q \in [q_{\min}, q_{\max}]$ via a linear affine transformation:
@@ -597,9 +625,9 @@ To diagnose where custom architectures succeed and where transfer learning provi
 \end{figure}
 
 \begin{itemize}[leftmargin=*,itemsep=1pt]
-  \item \textbf{Visually Distinct Classes:} Categories with unique color and surface signatures, such as \textit{Food Organics} and \textit{Vegetation}, exhibit high recall ($\geq 90\%$) across all models.
-  \item \textbf{High-Ambiguity Classes:} \textit{Miscellaneous Trash} is the most challenging category. Model A achieves only 36.0\% recall, while Model B improves this to 64.0\%. The pretrained backbones reach 75\%--77\% by leveraging high-level texture primitives learned on ImageNet.
-  \item \textbf{Deformable Materials:} \textit{Textile Trash} and \textit{Paper} exhibit significant cross-confusion due to low spatial resolution ($64 \times 64$). SOTA models maintain $>85\%$ recall on these challenging deformable categories.
+  \item \textbf{Visually Distinct Classes:} Categories with unique color and surface signatures, such as \textit{Food Organics} and \textit{Vegetation}, exhibit high recall (89--97\%) across all models.
+  \item \textbf{High-Ambiguity Classes:} \textit{Miscellaneous Trash} is the most challenging category. Model A achieves only 36.0\% recall, while Model B improves this to 64.0\%. The pretrained backbones reach 86.7\% (MobileNetV2) and 82.7\% (ShuffleNetV2) by leveraging high-level texture primitives learned on ImageNet.
+  \item \textbf{Deformable Materials:} \textit{Textile Trash} is the hardest class for every model; Model B confuses 27\% of textile samples with \textit{Paper} at $64 \times 64$. Even the SOTA models reach only 79.2\% (MobileNetV2) and 72.9\% (ShuffleNetV2) recall on textiles, their lowest of any class, while recovering \textit{Paper} well (92.0\% and 93.3\%).
 \end{itemize}
 
 %==============================================================================
@@ -617,17 +645,17 @@ Table~\ref{tab:per_class_table} provides the full class-by-class precision and r
     \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}
     & \textbf{Prec} & \textbf{Rec} & \textbf{Prec} & \textbf{Rec} & \textbf{Prec} & \textbf{Rec} & \textbf{Prec} & \textbf{Rec} \\
     \midrule
-    Cardboard           & 80.4\% & 65.2\% & 62.2\% & 73.9\% & 87.2\% & 90.0\% & 86.4\% & 84.0\% \\
-    Food Organics       & 70.0\% & 90.3\% & 65.9\% & 90.3\% & 94.4\% & 90.0\% & 93.7\% & 95.0\% \\
-    Glass               & 81.5\% & 69.8\% & 86.0\% & 77.8\% & 91.8\% & 89.0\% & 89.6\% & 89.0\% \\
-    Metal               & 84.8\% & 66.1\% & 72.2\% & 66.1\% & 85.5\% & 90.0\% & 86.4\% & 86.0\% \\
-    Miscellaneous Trash & 32.9\% & 36.0\% & 51.1\% & 64.0\% & 74.5\% & 77.0\% & 76.5\% & 75.0\% \\
-    Paper               & 69.0\% & 77.3\% & 61.2\% & 84.0\% & 89.1\% & 85.0\% & 90.2\% & 92.0\% \\
-    Plastic             & 71.4\% & 68.8\% & 87.4\% & 55.1\% & 88.6\% & 86.0\% & 89.4\% & 91.0\% \\
-    Textile Trash       & 48.7\% & 39.6\% & 65.4\% & 35.4\% & 87.5\% & 88.0\% & 86.3\% & 88.0\% \\
-    Vegetation          & 62.4\% & 89.2\% & 84.5\% & 92.3\% & 97.2\% & 97.0\% & 97.5\% & 97.0\% \\
+    Cardboard           & 80.4\% & 65.2\% & 62.2\% & 73.9\% & 87.7\% & 92.8\% & 86.1\% & 89.9\% \\
+    Food Organics       & 70.0\% & 90.3\% & 65.9\% & 90.3\% & 96.6\% & 90.3\% & 95.0\% & 91.9\% \\
+    Glass               & 81.5\% & 69.8\% & 86.0\% & 77.8\% & 93.8\% & 96.8\% & 93.8\% & 95.2\% \\
+    Metal               & 84.8\% & 66.1\% & 72.2\% & 66.1\% & 92.6\% & 84.7\% & 88.9\% & 81.4\% \\
+    Miscellaneous Trash & 32.9\% & 36.0\% & 51.1\% & 64.0\% & 79.3\% & 86.7\% & 83.8\% & 82.7\% \\
+    Paper               & 69.0\% & 77.3\% & 61.2\% & 84.0\% & 95.8\% & 92.0\% & 86.4\% & 93.3\% \\
+    Plastic             & 71.4\% & 68.8\% & 87.4\% & 55.1\% & 86.2\% & 90.6\% & 87.7\% & 87.7\% \\
+    Textile Trash       & 48.7\% & 39.6\% & 65.4\% & 35.4\% & 86.4\% & 79.2\% & 81.4\% & 72.9\% \\
+    Vegetation          & 62.4\% & 89.2\% & 84.5\% & 92.3\% & 92.4\% & 93.8\% & 86.3\% & 96.9\% \\
     \midrule
-    \textbf{Macro Average} & \textbf{66.8\%} & \textbf{66.9\%} & \textbf{70.6\%} & \textbf{71.0\%} & \textbf{88.4\%} & \textbf{88.4\%} & \textbf{88.9\%} & \textbf{88.7\%} \\
+    \textbf{Macro Average} & \textbf{66.8\%} & \textbf{66.9\%} & \textbf{70.6\%} & \textbf{71.0\%} & \textbf{90.1\%} & \textbf{89.7\%} & \textbf{87.7\%} & \textbf{88.0\%} \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -637,13 +665,13 @@ To understand the misclassifications identified in the confusion matrix (Figure~
 
 \begin{itemize}[leftmargin=*,itemsep=3pt]
   \item \textbf{Miscellaneous Trash vs. Plastic and Metal (Ambiguity Score: High):}
-  \textit{Miscellaneous Trash} represents composite waste, crushed food containers, snack wrappers, and multi-layer packaging. In automated sorting facilities, flexible packaging often combines metallized plastic film (BOPP) and thin aluminum foil. At $64 \times 64$ spatial downscaling, the specular reflections and crushed geometric facets appear indistinguishable from crumpled aluminum cans (\textit{Metal}) or shiny plastic bottles (\textit{Plastic}). Consequently, Model A misclassifies 20.0\% of miscellaneous trash samples as plastic or metal. Model B's multi-scale depthwise features reduce this error to 14.0\%.
+  \textit{Miscellaneous Trash} represents composite waste, crushed food containers, snack wrappers, and multi-layer packaging. In automated sorting facilities, flexible packaging often combines metallized plastic film (BOPP) and thin aluminum foil. At $64 \times 64$ spatial downscaling, the specular reflections and crushed geometric facets appear indistinguishable from crumpled aluminum cans (\textit{Metal}) or shiny plastic bottles (\textit{Plastic}). Consequently, Model A misclassifies 20.0\% of miscellaneous trash samples as plastic or metal. Model B's multi-scale depthwise features reduce this error to 8.0\%.
 
   \item \textbf{Glass vs. Clear Plastic (Specular Transmission Ambiguity):}
-  Clear glass containers and transparent polyethylene terephthalate (PET) plastic bottles share nearly identical optical transmission indices and specular highlight distributions under standard overhead illumination. Without polarized lighting or hyperspectral infrared sensing, downscaled RGB sensors cannot register the subtle refractive indices distinguishing soda-lime silicate glass from polymer chains, resulting in 5.1\% mutual confusion across custom models.
+  Clear glass containers and transparent polyethylene terephthalate (PET) plastic bottles share nearly identical optical transmission indices and specular highlight distributions under standard overhead illumination. Without polarized lighting or hyperspectral infrared sensing, downscaled RGB sensors cannot register the subtle refractive indices distinguishing soda-lime silicate glass from polymer chains, resulting in 4--5\% mutual confusion across the custom models.
 
   \item \textbf{Fibrous Degradation: Cardboard vs. Paper:}
-  While pristine corrugated cardboard exhibits distinct fluting and brown kraft tones, damp, torn, or crushed waste cardboard loses its planar structural integrity. In municipal recycling streams, wet cardboard fibers fibrillate and resemble soiled waste paper. Transfer learning models (MobileNetV2 and ShuffleNetV2) resolve this ambiguity (achieving 90\% and 84\% recall) by leveraging pre-trained contextual edge detectors that discern thickness boundaries and corrugated edge profiles.
+  While pristine corrugated cardboard exhibits distinct fluting and brown kraft tones, damp, torn, or crushed waste cardboard loses its planar structural integrity. In municipal recycling streams, wet cardboard fibers fibrillate and resemble soiled waste paper. Transfer learning models (MobileNetV2 and ShuffleNetV2) resolve this ambiguity (achieving 92.8\% and 89.9\% recall) by leveraging pre-trained contextual edge detectors that discern thickness boundaries and corrugated edge profiles.
 
   \item \textbf{Vegetation vs. Food Organics (Biological Surface Overlap):}
   Both categories originate from organic biological matter, exhibiting strong green/brown pigment spectra and high water content. Model B achieves 92.3\% recall on vegetation and 90.3\% on food organics, indicating that the color constancy and localized texture pooling of $3 \times 3$ depthwise filters provide robust discriminatory cues for biodegradable segregation.
@@ -656,12 +684,12 @@ To understand the misclassifications identified in the confusion matrix (Figure~
 \subsection{Architectural Synthesis for Embedded Systems}
 Based on our empirical profiling, we establish the following deployment guidelines:
 \begin{enumerate}[leftmargin=*,itemsep=1pt]
-  \item \textbf{Microcontrollers (Bare-Metal Cortex-M, ESP32-S3):} Model B is the only viable candidate. With a 98\,KB flash footprint and 6.19M MACs, it runs entirely within on-chip SRAM without external PSRAM chips. Applying INT8 quantization further compresses Model B to $\approx 25$\,KB.
-  \item \textbf{Single-Board Computers (Raspberry Pi Zero 2, Jetson Nano):} When external DRAM and operating systems are present, ShuffleNetV2 1.0$\times$ represents the optimal deployment candidate, providing 88.64\% accuracy at 4.98\,MB.
+  \item \textbf{Microcontrollers (Bare-Metal Cortex-M, ESP32-S3):} Model B is the preferred candidate. With 89\,KB of FP32 weights (105\,KB serialized) and 6.19M MACs, it runs within on-chip memory without external PSRAM, and INT8 quantization compresses its weights to $\approx 22$\,KB. Model A would also fit after INT8 quantization ($\approx 100$\,KB) but needs $6.7\times$ more MACs per frame for no accuracy gain.
+  \item \textbf{Single-Board Computers (Raspberry Pi Zero 2, Jetson Nano):} When external DRAM and an operating system are present, the pretrained backbones become viable: MobileNetV2 gives the highest accuracy (89.62\% at 8.76\,MB), while ShuffleNetV2 offers 87.80\% at a 43\% smaller footprint (4.98\,MB) and half the MACs.
 \end{enumerate}
 
 \subsection{Edge Hardware Roofline Model and Target Platform Benchmark Matrix}
-To formally establish deployment feasibility, we employ Williams' \textit{Roofline Model}, which evaluates whether a deep learning workload is constrained by raw computational ALU throughput ($\text{FLOPs/s}$) or memory bandwidth ($\text{Bytes/s}$):
+To formally establish deployment feasibility, we employ Williams' \textit{Roofline Model}~\cite{roofline}, which evaluates whether a deep learning workload is constrained by raw computational ALU throughput ($\text{FLOPs/s}$) or memory bandwidth ($\text{Bytes/s}$):
 \begin{equation}
   P_{\text{attainable}} = \min\left( P_{\text{peak}}, \; I_A \times B_{\text{mem}} \right)
 \end{equation}
@@ -688,7 +716,7 @@ The critical boundary is the \textit{Machine Balance Point} ($I_{\text{balance}}
     Machine Balance ($I_{\text{balance}}$) & 4.8\,FLOP/Byte        & 3.2\,FLOP/Byte                & 12.5\,FLOP/Byte \\
     \midrule
     \textbf{Model B Suitability} & \textbf{Optimal (Compute-Bound)} & \textbf{Optimal (Compute-Bound)} & \textbf{High (Excess Capacity)} \\
-    Model B SRAM Allocation    & 98\,KB (9.6\% SRAM)              & 98\,KB (19.1\% SRAM)          & 98\,KB ($<0.1\%$ RAM) \\
+    Model B FP32 Weights       & 89\,KB (8.7\% SRAM)              & 89\,KB (17.4\% SRAM)          & 89\,KB ($<0.1\%$ RAM) \\
     Model B Quantized INT8 Size& 22.3\,KB (1.1\% Flash)           & 22.3\,KB (0.3\% Flash)        & 22.3\,KB ($<0.1\%$ Storage) \\
     \midrule
     \textbf{MobileNetV2 Suitability} & \textbf{Infeasible (Exceeds Flash/SRAM)} & \textbf{Marginal (Bus Stalls)} & \textbf{Optimal (High-Accuracy)} \\
@@ -705,7 +733,7 @@ Table~\ref{tab:platform_matrix} underscores the engineering thesis of this inves
 \end{itemize}
 
 \subsection{Reproducibility and Codebase Architecture}
-All experiments, training curves, confusion matrices, and hardware profiling routines are entirely reproducible through the accompanying Jupyter Notebook:
+The accompanying Jupyter Notebook defines all four architectures, reproduces the parameter counts and hardware profiling, and regenerates every figure from the saved training and evaluation logs; the training runs themselves are produced by the scripts in \texttt{experiments/}:
 \begin{center}
   \texttt{Outliers\_A03\_EN3150.ipynb}
 \end{center}
@@ -720,9 +748,9 @@ All scripts, trained checkpoints (\texttt{weights/}), and metric logs are mainta
 \begin{thebibliography}{12}
 
 \bibitem{realwaste2023}
-S.~Rajput, et al.,
-\newblock ``RealWaste: A Dataset for Landfill Waste Sorting and Recycling Classification,''
-\newblock \emph{UCI Machine Learning Repository}, 2023.
+S.~Single, S.~Iranmanesh, and R.~Raad,
+\newblock ``RealWaste: A Novel Real-Life Data Set for Landfill Waste Classification Using Deep Learning,''
+\newblock \emph{Information}, vol.~14, no.~12, p.~633, 2023. Dataset: UCI Machine Learning Repository.
 
 \bibitem{mobilenets}
 A.~G.~Howard, M.~Zhu, B.~Chen, et al.,
