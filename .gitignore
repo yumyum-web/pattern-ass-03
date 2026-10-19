@@ -37,3 +37,8 @@ test_on_colab.ipynb
 *.aux
 *.log
 *.out
+*.toc
+*.lof
+*.lot
+*.synctex.gz
+Misclassified_A03_EN3150_report.pdf

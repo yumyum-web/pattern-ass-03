@@ -3,10 +3,10 @@
 **Module:** EN3150 — Pattern Recognition  
 **Team:** Outliers  
 **Members:**
-- Yumeth
-- Ravishan
-- Shanuka
-- Damindu
+- Yumeth Sumathipala (220627B)
+- Pasindu Ravishan (220532E)
+- Shanuka Panagoda (220440U)
+- Damindu De Silva (220104U)
 
 ---
 
