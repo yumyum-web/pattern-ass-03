@@ -43,47 +43,48 @@ def run_experiment(
     epochs: int = 20,
     batch_size: int = 64,
     lr: float = 1e-3,
-    weight_decay: float = 1e-4,
+    weight_decay: float = 0.0,
     seed: int = 42,
     figures_dir: str = "figures",
     results_dir: str = "results",
     checkpoints_dir: str = "checkpoints",
+    use_scheduler: bool = False,
 ) -> None:
     """Executes the full Model A training and evaluation workflow."""
     set_seed(seed)
     device = get_default_device()
-    print("=" * 72)
-    print(f"Model A (Standard CNN Baseline) Training Pipeline")
-    print(f"Device: {device} | Epochs: {epochs} | Batch Size: {batch_size} | LR: {lr}")
-    print("=" * 72)
+    print("=" * 72, flush=True)
+    print(f"Model A (Standard CNN Baseline) Training Pipeline", flush=True)
+    print(f"Device: {device} | Epochs: {epochs} | Batch Size: {batch_size} | LR: {lr}", flush=True)
+    print("=" * 72, flush=True)
 
     # 1. Data Loading
-    print("\n[Step 1/5] Loading RealWaste 64x64 dataset splits...")
+    print("\n[Step 1/5] Loading RealWaste 64x64 dataset splits...", flush=True)
     train_loader, val_loader, test_loader, class_to_idx = get_realwaste_dataloaders(
         data_dir=data_dir,
         batch_size=batch_size,
         image_size=64,
         seed=seed,
         num_workers=2,
-        download=False,
+        download=True,
     )
-    print(f"  Train samples: {len(train_loader.dataset):,}")
-    print(f"  Val samples:   {len(val_loader.dataset):,}")
-    print(f"  Test samples:  {len(test_loader.dataset):,}")
+    print(f"  Train samples: {len(train_loader.dataset):,}", flush=True)
+    print(f"  Val samples:   {len(val_loader.dataset):,}", flush=True)
+    print(f"  Test samples:  {len(test_loader.dataset):,}", flush=True)
 
     # 2. Model Initialization
-    print("\n[Step 2/5] Initializing Model A architecture...")
+    print("\n[Step 2/5] Initializing Model A architecture...", flush=True)
     model = create_model_a(num_classes=len(CLASSES), in_channels=3)
     param_counts = model.count_parameters()
-    print(f"  Total Parameters:     {param_counts['total_parameters']:,}")
-    print(f"  Trainable Parameters: {param_counts['trainable_parameters']:,}")
+    print(f"  Total Parameters:     {param_counts['total_parameters']:,}", flush=True)
+    print(f"  Trainable Parameters: {param_counts['trainable_parameters']:,}", flush=True)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5) if use_scheduler else None
 
     # 3. Model Training
-    print("\n[Step 3/5] Commencing 20-epoch training loop...")
+    print("\n[Step 3/5] Commencing 20-epoch training loop...", flush=True)
     checkpoint_path = os.path.join(checkpoints_dir, "model_a_best.pt")
     history = train_model(
         model=model,
@@ -99,7 +100,7 @@ def run_experiment(
     )
 
     # 4. Evaluation on Test Set
-    print("\n[Step 4/5] Evaluating best checkpoint on unseen Test Set...")
+    print("\n[Step 4/5] Evaluating best checkpoint on unseen Test Set...", flush=True)
     test_metrics = evaluate_test_set(
         model=model,
         test_loader=test_loader,
@@ -107,25 +108,26 @@ def run_experiment(
         checkpoint_path=checkpoint_path,
     )
 
-    print("-" * 72)
-    print(f"Test Accuracy:         {test_metrics['test_accuracy']:.2f}%")
-    print(f"Macro Precision:       {test_metrics['precision_macro']:.4f}")
-    print(f"Macro Recall:          {test_metrics['recall_macro']:.4f}")
-    print(f"Macro F1-Score:        {test_metrics['f1_macro']:.4f}")
-    print(f"Weighted F1-Score:     {test_metrics['f1_weighted']:.4f}")
-    print("-" * 72)
+    print("-" * 72, flush=True)
+    print(f"Test Accuracy:         {test_metrics['test_accuracy']:.2f}%", flush=True)
+    print(f"Macro Precision:       {test_metrics['precision_macro']:.4f}", flush=True)
+    print(f"Macro Recall:          {test_metrics['recall_macro']:.4f}", flush=True)
+    print(f"Macro F1-Score:        {test_metrics['f1_macro']:.4f}", flush=True)
+    print(f"Weighted F1-Score:     {test_metrics['f1_weighted']:.4f}", flush=True)
+    print("-" * 72, flush=True)
 
     # 5. Exporting Visualizations and Metrics
-    print("\n[Step 5/5] Exporting figures and result metrics...")
+    print("\n[Step 5/5] Exporting figures and result metrics...", flush=True)
     Path(figures_dir).mkdir(parents=True, exist_ok=True)
     Path(results_dir).mkdir(parents=True, exist_ok=True)
+    Path("experiments/results").mkdir(parents=True, exist_ok=True)
 
-    # Loss & Accuracy Curves
+    # Loss & Accuracy Curves (Exports both .png and .pdf)
     loss_curve_path = os.path.join(figures_dir, "model_a_loss_curve.png")
     plot_training_curves(history, loss_curve_path, title_suffix="Model A (Standard CNN)")
-    print(f"  Saved training curves to: {loss_curve_path}")
+    print(f"  Saved training curves to: {loss_curve_path} and .pdf", flush=True)
 
-    # Confusion Matrix Heatmap
+    # Confusion Matrix Heatmap (Exports both .png and .pdf)
     cm_path = os.path.join(figures_dir, "model_a_confusion_matrix.png")
     plot_confusion_matrix_heatmap(
         cm=test_metrics["confusion_matrix"],
@@ -133,7 +135,7 @@ def run_experiment(
         save_path=cm_path,
         title="Model A Test Confusion Matrix (9 Classes)",
     )
-    print(f"  Saved confusion matrix to: {cm_path}")
+    print(f"  Saved confusion matrix to: {cm_path} and .pdf", flush=True)
 
     # Serialize JSON Metrics
     serializable_results = {
@@ -147,7 +149,7 @@ def run_experiment(
             "learning_rate": lr,
             "weight_decay": weight_decay,
             "optimizer": "Adam",
-            "scheduler": "CosineAnnealingLR",
+            "scheduler": "CosineAnnealingLR" if use_scheduler else "None",
             "seed": seed,
         },
         "training_history": {
@@ -173,11 +175,14 @@ def run_experiment(
         },
     }
 
-    metrics_json_path = os.path.join(results_dir, "model_a_metrics.json")
-    with open(metrics_json_path, "w", encoding="utf-8") as f:
-        json.dump(serializable_results, f, indent=2)
-    print(f"  Saved JSON metrics to: {metrics_json_path}")
-    print("\n✅ Model A training experiment completed successfully!")
+    # Save to results/ and experiments/results/ for cross-branch compatibility
+    for out_dir in [results_dir, "experiments/results"]:
+        metrics_json_path = os.path.join(out_dir, "model_a_metrics.json")
+        with open(metrics_json_path, "w", encoding="utf-8") as f:
+            json.dump(serializable_results, f, indent=2)
+        print(f"  Saved JSON metrics to: {metrics_json_path}", flush=True)
+
+    print("\n✅ Model A training experiment completed successfully!", flush=True)
 
 
 if __name__ == "__main__":
@@ -186,7 +191,8 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=64, help="Mini-batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate")
-    parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay")
+    parser.add_argument("--weight-decay", type=float, default=0.0, help="Weight decay")
+    parser.add_argument("--use-scheduler", action="store_true", default=False, help="Use CosineAnnealingLR scheduler")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--figures-dir", type=str, default="figures", help="Directory for output figures")
     parser.add_argument("--results-dir", type=str, default="results", help="Directory for JSON results")
@@ -203,4 +209,5 @@ if __name__ == "__main__":
         figures_dir=args.figures_dir,
         results_dir=args.results_dir,
         checkpoints_dir=args.checkpoints_dir,
+        use_scheduler=args.use_scheduler,
     )

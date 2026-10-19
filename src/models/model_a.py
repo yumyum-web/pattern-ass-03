@@ -21,7 +21,6 @@ class ModelA(nn.Module):
         - Block 3: Conv2d(64 -> 128, k=3, p=1) + BatchNorm2d(128) + ReLU + MaxPool2d(2, 2) -> (B, 128, 8, 8)
         - Global Pooling: AdaptiveAvgPool2d((1, 1)) -> (B, 128, 1, 1) -> Flatten -> (B, 128)
         - Classifier Head:
-            - Dropout(p=0.3)
             - Linear(128 -> 64) + ReLU
             - Dropout(p=0.2)
             - Linear(64 -> 9)
@@ -38,7 +37,7 @@ class ModelA(nn.Module):
              and >500k dense weights), enforcing spatial invariance while minimizing parameter overhead.
     """
 
-    def __init__(self, num_classes: int = 9, in_channels: int = 3, dropout_rate: float = 0.3):
+    def __init__(self, num_classes: int = 9, in_channels: int = 3, dropout_rate: float = 0.2):
         super().__init__()
         self.num_classes = num_classes
         self.in_channels = in_channels
@@ -67,12 +66,11 @@ class ModelA(nn.Module):
         # Global Receptive Aggregation
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-        # Classification Head
+        # Classification Head: Fair single-dropout regularization matching Model B
         self.classifier = nn.Sequential(
-            nn.Dropout(p=dropout_rate),
             nn.Linear(128, 64),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=dropout_rate * 0.67),
+            nn.Dropout(p=dropout_rate),
             nn.Linear(64, num_classes),
         )
 
@@ -119,17 +117,45 @@ class ModelA(nn.Module):
     def get_layer_breakdown(self) -> Dict[str, Dict[str, Any]]:
         """
         Detailed breakdown of trainable parameters across each architectural layer.
-        Useful for formal report documentation and comparative analysis.
+        Derives parameter counts dynamically from layer weights to avoid hardcoding drift.
         """
+        convs = [m for m in self.features if isinstance(m, nn.Conv2d)]
+        bns = [m for m in self.features if isinstance(m, nn.BatchNorm2d)]
+        linears = [m for m in self.classifier if isinstance(m, nn.Linear)]
+
         breakdown = {
-            "Conv1 (3x3, 3->32)": {"params": 32 * 3 * 3 * 3, "output_shape": "32x32x32"},
-            "BatchNorm1 (32)": {"params": 32 * 2, "output_shape": "32x32x32"},
-            "Conv2 (3x3, 32->64)": {"params": 64 * 32 * 3 * 3, "output_shape": "64x16x16"},
-            "BatchNorm2 (64)": {"params": 64 * 2, "output_shape": "64x16x16"},
-            "Conv3 (3x3, 64->128)": {"params": 128 * 64 * 3 * 3, "output_shape": "128x8x8"},
-            "BatchNorm3 (128)": {"params": 128 * 2, "output_shape": "128x8x8"},
-            "Linear1 (128->64)": {"params": 128 * 64 + 64, "output_shape": "64"},
-            "Linear2 (64->9)": {"params": 64 * 9 + 9, "output_shape": "9"},
+            "Conv1 (3x3, 3->32)": {
+                "params": sum(p.numel() for p in convs[0].parameters()),
+                "output_shape": "32x32x32",
+            },
+            "BatchNorm1 (32)": {
+                "params": sum(p.numel() for p in bns[0].parameters()),
+                "output_shape": "32x32x32",
+            },
+            "Conv2 (3x3, 32->64)": {
+                "params": sum(p.numel() for p in convs[1].parameters()),
+                "output_shape": "64x16x16",
+            },
+            "BatchNorm2 (64)": {
+                "params": sum(p.numel() for p in bns[1].parameters()),
+                "output_shape": "64x16x16",
+            },
+            "Conv3 (3x3, 64->128)": {
+                "params": sum(p.numel() for p in convs[2].parameters()),
+                "output_shape": "128x8x8",
+            },
+            "BatchNorm3 (128)": {
+                "params": sum(p.numel() for p in bns[2].parameters()),
+                "output_shape": "128x8x8",
+            },
+            "Linear1 (128->64)": {
+                "params": sum(p.numel() for p in linears[0].parameters()),
+                "output_shape": "64",
+            },
+            "Linear2 (64->9)": {
+                "params": sum(p.numel() for p in linears[1].parameters()),
+                "output_shape": str(self.num_classes),
+            },
         }
         return breakdown
 

@@ -4,8 +4,6 @@ Downscales images to 64x64 pixels and produces deterministic 70% / 15% / 15%
 stratified train/val/test splits for resource-constrained edge classification.
 """
 
-import os
-import sys
 import zipfile
 import urllib.request
 from typing import Dict, List, Tuple, Optional
@@ -256,27 +254,43 @@ def get_realwaste_dataloaders(
         else:
             raise FileNotFoundError(f"RealWaste dataset not found in {data_dir}. Set download=True.")
 
-    cache_file = Path(data_dir) / f"realwaste_cache_{image_size}x{image_size}.pt"
+    cache_file = Path(data_dir) / f"realwaste_cache_{image_size}x{image_size}_seed{seed}.pt"
+    legacy_cache_file = Path(data_dir) / f"realwaste_cache_{image_size}x{image_size}.pt"
+
     train_transform, eval_transform = get_transforms(image_size=image_size)
 
-    if use_cache and cache_file.exists():
-        cached = torch.load(cache_file, weights_only=False)
-        train_dataset = RealWasteDataset(
-            images_tensor=cached["train_imgs"],
-            labels=cached["train_labels"],
-            transform=train_transform,
-        )
-        val_dataset = RealWasteDataset(
-            images_tensor=cached["val_imgs"],
-            labels=cached["val_labels"],
-            transform=eval_transform,
-        )
-        test_dataset = RealWasteDataset(
-            images_tensor=cached["test_imgs"],
-            labels=cached["test_labels"],
-            transform=eval_transform,
-        )
-    else:
+    target_cache: Optional[Path] = None
+    if use_cache:
+        if cache_file.exists():
+            target_cache = cache_file
+        elif legacy_cache_file.exists() and seed == 42:
+            target_cache = legacy_cache_file
+
+    cached_loaded = False
+    if target_cache is not None:
+        try:
+            cached = torch.load(target_cache, weights_only=True)
+            if cached.get("seed", seed) == seed and cached.get("image_size", image_size) == image_size:
+                train_dataset = RealWasteDataset(
+                    images_tensor=cached["train_imgs"],
+                    labels=cached["train_labels"],
+                    transform=train_transform,
+                )
+                val_dataset = RealWasteDataset(
+                    images_tensor=cached["val_imgs"],
+                    labels=cached["val_labels"],
+                    transform=eval_transform,
+                )
+                test_dataset = RealWasteDataset(
+                    images_tensor=cached["test_imgs"],
+                    labels=cached["test_labels"],
+                    transform=eval_transform,
+                )
+                cached_loaded = True
+        except Exception:
+            cached_loaded = False
+
+    if not cached_loaded:
         filepaths, labels = collect_image_records(root)
 
         # Deterministic stratified split: 70% Train, 30% Temp (Val + Test)
@@ -298,12 +312,14 @@ def get_realwaste_dataloaders(
         )
 
         if use_cache:
-            print(f"[Data Pipeline] Caching {len(filepaths)} images to 64x64 uint8 tensors...")
+            print(f"[Data Pipeline] Caching {len(filepaths)} images to 64x64 uint8 tensors (seed={seed})...")
             train_imgs = _preprocess_image_list(train_files, image_size)
             val_imgs = _preprocess_image_list(val_files, image_size)
             test_imgs = _preprocess_image_list(test_files, image_size)
 
             torch.save({
+                "seed": seed,
+                "image_size": image_size,
                 "train_imgs": train_imgs,
                 "train_labels": train_labels,
                 "val_imgs": val_imgs,
@@ -354,7 +370,7 @@ if __name__ == "__main__":
         print(f"  [{idx}] {name}")
 
     train_loader, val_loader, test_loader, c2i = get_realwaste_dataloaders(
-        data_dir="data", batch_size=32, num_workers=2, download=False
+        data_dir="data", batch_size=32, num_workers=2, download=True
     )
     total = len(train_loader.dataset) + len(val_loader.dataset) + len(test_loader.dataset)
     print(f"\nDataset Splits (Total: {total}):")
